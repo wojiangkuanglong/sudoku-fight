@@ -1,5 +1,7 @@
 # 从 H5 迁移到微信小游戏的架构说明
 
+**分步执行清单（含服务端适配与验收顺序）见：[wechat-minigame-migration-checklist.md](./wechat-minigame-migration-checklist.md)。**
+
 ## 分层建议
 
 | 层级 | 当前 H5 | 微信小游戏侧 |
