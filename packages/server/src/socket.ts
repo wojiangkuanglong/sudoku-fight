@@ -79,6 +79,20 @@ export function registerSocket(io: Server): void {
       broadcastGameState(io, room);
     });
 
+    socket.on("lobby:rematch", () => {
+      const roomId = socketRoom.get(socket.id);
+      if (!roomId) return;
+      const room = rooms.get(roomId);
+      if (!room) return;
+      const res = room.voteRematch(socket.id);
+      if (!res.ok) {
+        socket.emit("app:error", { message: res.reason });
+        return;
+      }
+      io.to(roomId).emit("lobby:roster", { players: publicLobbyPlayers(room) });
+      broadcastGameState(io, room);
+    });
+
     socket.on("lobby:ready", (payload: { ready?: boolean }) => {
       const roomId = socketRoom.get(socket.id);
       if (!roomId) return;

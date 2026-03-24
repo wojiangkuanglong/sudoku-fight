@@ -1,6 +1,8 @@
 # Sudoku Fight（双人实时对战数独）
 
-Monorepo：`packages/shared`（规则与题目）、`packages/server`（Socket.IO 房间与道具权威逻辑）、`packages/web`（React + Vite）。
+Monorepo：`packages/shared`（规则与题目）、`packages/server`（Socket.IO 房间与道具权威逻辑）、`packages/web`（React + Vite + **Tailwind CSS v4** + **PixiJS** 棋盘）。
+
+- 微信小游戏迁移说明见 [`docs/wechat-minigame-port.md`](docs/wechat-minigame-port.md)。
 
 ## 玩法摘要
 
@@ -10,6 +12,11 @@ Monorepo：`packages/shared`（规则与题目）、`packages/server`（Socket.I
   - **遮行 30s**：指定一行，对手该行被遮罩（仅表现层；答题逻辑仍在自己网格上）。
   - **撤销 3 步**：撤销对手最近 3 次填写（不含题目给定格）。
   - **冰冻 8s**：对手暂时无法提交填数。
+- **本局计时**：对局中显示已用时间；终局显示决胜用时。
+- **冲突高亮**：行/列/九宫出现重复数字时标红（仍可继续填，终局须与标解一致）。
+- **房间号一键复制**；错误提示约 5 秒后自动消失。
+- **再来一局**：结束后双方各点一次确认，回到同一房间大厅并重新准备开局。
+- 开发模式下前端使用 `vite --host`，便于局域网其他设备访问（控制台会打印 Network URL）。
 
 ## 本地运行
 

@@ -34,6 +34,12 @@ export class Room {
   phase: RoomPhase = "lobby";
   puzzle: PuzzlePack | null = null;
   winnerId: string | null = null;
+  /** 本局开始时间（毫秒），对局中/结束后有效 */
+  gameStartedAt: number | null = null;
+  /** 有人提交正确终局的时间 */
+  finishedAt: number | null = null;
+  /** 结束后点击「再来一局」的玩家 socketId */
+  readonly rematchAck = new Set<string>();
   readonly players = new Map<string, PlayerState>();
 
   constructor(id: string) {
@@ -77,6 +83,9 @@ export class Room {
     this.puzzle = pick;
     this.phase = "playing";
     this.winnerId = null;
+    this.gameStartedAt = now;
+    this.finishedAt = null;
+    this.rematchAck.clear();
     for (const p of this.players.values()) {
       p.grid = cloneGrid(pick.givens);
       p.history = [];
@@ -118,6 +127,7 @@ export class Room {
     if (isSolved(me.grid, this.puzzle.solution)) {
       this.phase = "done";
       this.winnerId = socketId;
+      this.finishedAt = now;
     }
     return { ok: true };
   }
@@ -166,6 +176,35 @@ export class Room {
       }
     }
   }
+
+  /** 双方确认后回到大厅，保留玩家，需重新准备 */
+  resetToLobbyAfterMatch(): void {
+    this.phase = "lobby";
+    this.puzzle = null;
+    this.winnerId = null;
+    this.gameStartedAt = null;
+    this.finishedAt = null;
+    this.rematchAck.clear();
+    for (const p of this.players.values()) {
+      p.grid = emptyGrid();
+      p.history = [];
+      p.ready = false;
+      p.freezeUntil = 0;
+      p.rowBlindUntil = Array.from({ length: 9 }, () => 0);
+      p.itemUses = 0;
+      p.itemReadyAt = 0;
+    }
+  }
+
+  voteRematch(socketId: string): { ok: true } | { ok: false; reason: string } {
+    if (this.phase !== "done") return { ok: false, reason: "只有本局结束后才能再来一局" };
+    if (!this.players.has(socketId)) return { ok: false, reason: "不在房间内" };
+    this.rematchAck.add(socketId);
+    if (this.rematchAck.size >= 2) {
+      this.resetToLobbyAfterMatch();
+    }
+    return { ok: true };
+  }
 }
 
 function emptyGrid(): Grid9 {
@@ -202,6 +241,10 @@ export function buildPersonalState(room: Room, myId: string, now: number) {
       itemReadyAt: me?.itemReadyAt ?? 0,
       itemMax: ITEM_MAX_PER_GAME,
       itemCooldownMs: ITEM_COOLDOWN_MS,
+      gameStartedAt: room.gameStartedAt,
+      finishedAt: room.finishedAt,
+      puzzleId: null as string | null,
+      rematchVotes: [...room.rematchAck],
     };
   }
 
@@ -221,5 +264,9 @@ export function buildPersonalState(room: Room, myId: string, now: number) {
     itemReadyAt: me.itemReadyAt,
     itemMax: ITEM_MAX_PER_GAME,
     itemCooldownMs: ITEM_COOLDOWN_MS,
+    gameStartedAt: room.gameStartedAt,
+    finishedAt: room.finishedAt,
+    puzzleId: room.puzzle.id,
+    rematchVotes: [...room.rematchAck],
   };
 }
