@@ -10,11 +10,51 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { SudokuBoardPixi } from "./game/SudokuBoardPixi.js";
 
-const SERVER =
-  typeof import.meta.env.VITE_SERVER_URL === "string" &&
-  import.meta.env.VITE_SERVER_URL
-    ? import.meta.env.VITE_SERVER_URL
-    : "http://localhost:3001";
+const DEFAULT_SERVER_PORT = 3001;
+
+/** 未设置 VITE_SERVER_URL 时：本机用 localhost；手机/局域网用当前页面主机名，避免连到设备自身的 localhost。 */
+function socketServerUrl(): string {
+  const fromEnv = import.meta.env.VITE_SERVER_URL;
+  if (typeof fromEnv === "string" && fromEnv.trim()) {
+    return fromEnv.trim();
+  }
+  const { protocol, hostname } = window.location;
+  if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+    return `${protocol}//${hostname}:${DEFAULT_SERVER_PORT}`;
+  }
+  return `http://localhost:${DEFAULT_SERVER_PORT}`;
+}
+
+/** Clipboard API 仅在安全上下文可用；局域网 HTTP 下用隐藏 textarea + execCommand 兜底。 */
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* 继续走 execCommand */
+    }
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText =
+    "position:fixed;left:-9999px;top:0;opacity:0;font-size:12pt;";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } finally {
+    document.body.removeChild(ta);
+  }
+  return ok;
+}
 
 type Phase = "lobby" | "playing" | "done";
 
@@ -161,7 +201,7 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    const s = io(SERVER, { transports: ["websocket"] });
+    const s = io(socketServerUrl(), { transports: ["websocket"] });
     setSocket(s);
 
     s.on("lobby:created", (p: { roomId: string }) => {
@@ -274,13 +314,13 @@ export default function App() {
     if (!roomId) {
       return;
     }
-    try {
-      await navigator.clipboard.writeText(roomId);
-      setCopyHint(true);
-      window.setTimeout(() => setCopyHint(false), 2000);
-    } catch {
+    const ok = await copyTextToClipboard(roomId);
+    if (!ok) {
       setError("无法复制，请手动选中房间号");
+      return;
     }
+    setCopyHint(true);
+    window.setTimeout(() => setCopyHint(false), 2000);
   };
 
   const onSelectCell = useCallback(
