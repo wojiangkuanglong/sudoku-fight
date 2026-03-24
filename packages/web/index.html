@@ -1,13 +1,16 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sudoku Fight — 双人实时对战数独</title>
     <script>
-      try {
-        if (localStorage.getItem("sf-theme") === "light") document.documentElement.setAttribute("data-theme", "light");
-      } catch (_) {}
+    "use strict";
+    try {
+      if (localStorage.getItem("sf-theme") === "light") {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    } catch (_) {}
     </script>
   </head>
   <body>

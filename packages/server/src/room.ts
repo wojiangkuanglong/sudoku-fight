@@ -1,44 +1,44 @@
 import {
   CELL_LOCK_MS,
-  cloneGrid,
   COOLDOWN_SPIKE_MS,
+  cloneGrid,
+  type Difficulty,
+  type Digit,
+  FREEZE_MS,
   filledCount,
+  type Grid9,
   generatePuzzlePack,
+  ITEM_COOLDOWN_MS,
+  ITEM_MAX_PER_GAME,
+  type ItemType,
   isGiven,
   isSolved,
   isValidDigit,
-  SILENCE_MS,
-  type Difficulty,
-  type Digit,
-  type Grid9,
-  type ItemType,
   type MoveRecord,
   type PuzzlePack,
-  FREEZE_MS,
-  ITEM_COOLDOWN_MS,
-  ITEM_MAX_PER_GAME,
   ROW_BLIND_MS,
+  SILENCE_MS,
 } from "@sudoku-fight/shared";
 
 export type RoomPhase = "lobby" | "playing" | "done";
 
 export interface PlayerState {
-  name: string;
-  grid: Grid9;
-  history: MoveRecord[];
-  ready: boolean;
-  freezeUntil: number;
-  rowBlindUntil: number[];
-  colBlindUntil: number[];
   boxBlindUntil: number[];
-  itemUses: number;
-  itemReadyAt: number;
-  /** 无法使用技能的截止时间 */
-  silenceUntil: number;
+  cellLockCol: number;
   /** 被锁定的格子，-1 表示无 */
   cellLockRow: number;
-  cellLockCol: number;
   cellLockUntil: number;
+  colBlindUntil: number[];
+  freezeUntil: number;
+  grid: Grid9;
+  history: MoveRecord[];
+  itemReadyAt: number;
+  itemUses: number;
+  name: string;
+  ready: boolean;
+  rowBlindUntil: number[];
+  /** 无法使用技能的截止时间 */
+  silenceUntil: number;
 }
 
 export class Room {
@@ -60,9 +60,16 @@ export class Room {
     this.id = id;
   }
 
-  addPlayer(socketId: string, name: string): { ok: true } | { ok: false; reason: string } {
-    if (this.players.size >= 2) return { ok: false, reason: "房间已满" };
-    if (this.phase !== "lobby") return { ok: false, reason: "游戏已开始" };
+  addPlayer(
+    socketId: string,
+    name: string
+  ): { ok: true } | { ok: false; reason: string } {
+    if (this.players.size >= 2) {
+      return { ok: false, reason: "房间已满" };
+    }
+    if (this.phase !== "lobby") {
+      return { ok: false, reason: "游戏已开始" };
+    }
     this.players.set(socketId, {
       name: name.trim() || "玩家",
       grid: emptyGrid(),
@@ -86,32 +93,53 @@ export class Room {
     this.players.delete(socketId);
   }
 
-  setReady(socketId: string, ready: boolean): { ok: true } | { ok: false; reason: string } {
+  setReady(
+    socketId: string,
+    ready: boolean
+  ): { ok: true } | { ok: false; reason: string } {
     const p = this.players.get(socketId);
-    if (!p) return { ok: false, reason: "不在房间内" };
-    if (this.phase !== "lobby") return { ok: false, reason: "无法变更准备状态" };
+    if (!p) {
+      return { ok: false, reason: "不在房间内" };
+    }
+    if (this.phase !== "lobby") {
+      return { ok: false, reason: "无法变更准备状态" };
+    }
     p.ready = ready;
     return { ok: true };
   }
 
   setLobbyDifficulty(
     socketId: string,
-    difficulty: Difficulty,
+    difficulty: Difficulty
   ): { ok: true } | { ok: false; reason: string } {
-    if (!this.players.has(socketId)) return { ok: false, reason: "不在房间内" };
-    if (this.phase !== "lobby") return { ok: false, reason: "对局进行中无法更改难度" };
-    if (difficulty !== "easy" && difficulty !== "medium" && difficulty !== "hard") {
+    if (!this.players.has(socketId)) {
+      return { ok: false, reason: "不在房间内" };
+    }
+    if (this.phase !== "lobby") {
+      return { ok: false, reason: "对局进行中无法更改难度" };
+    }
+    if (
+      difficulty !== "easy" &&
+      difficulty !== "medium" &&
+      difficulty !== "hard"
+    ) {
       return { ok: false, reason: "难度无效" };
     }
     this.lobbyDifficulty = difficulty;
-    for (const p of this.players.values()) p.ready = false;
+    for (const p of this.players.values()) {
+      p.ready = false;
+    }
     return { ok: true };
   }
 
   tryStart(now: number): { started: boolean } {
-    if (this.phase !== "lobby" || this.players.size !== 2) return { started: false };
+    if (this.phase !== "lobby" || this.players.size !== 2) {
+      return { started: false };
+    }
     for (const p of this.players.values()) {
-      if (!p.ready) return { started: false };
+      if (!p.ready) {
+        return { started: false };
+      }
     }
     const pick = generatePuzzlePack(this.lobbyDifficulty);
     this.puzzle = pick;
@@ -139,7 +167,9 @@ export class Room {
 
   opponentOf(socketId: string): string | undefined {
     for (const id of this.players.keys()) {
-      if (id !== socketId) return id;
+      if (id !== socketId) {
+        return id;
+      }
     }
     return undefined;
   }
@@ -149,12 +179,18 @@ export class Room {
     row: number,
     col: number,
     value: number,
-    now: number,
+    now: number
   ): { ok: true } | { ok: false; reason: string } {
-    if (this.phase !== "playing" || !this.puzzle) return { ok: false, reason: "未在对局中" };
+    if (this.phase !== "playing" || !this.puzzle) {
+      return { ok: false, reason: "未在对局中" };
+    }
     const me = this.players.get(socketId);
-    if (!me) return { ok: false, reason: "不在房间内" };
-    if (now < me.freezeUntil) return { ok: false, reason: "你被冻结，暂时无法填数" };
+    if (!me) {
+      return { ok: false, reason: "不在房间内" };
+    }
+    if (now < me.freezeUntil) {
+      return { ok: false, reason: "你被冻结，暂时无法填数" };
+    }
     if (
       me.cellLockRow === row &&
       me.cellLockCol === col &&
@@ -162,13 +198,21 @@ export class Room {
     ) {
       return { ok: false, reason: "该格被锁定，稍后再改" };
     }
-    if (row < 0 || row > 8 || col < 0 || col > 8) return { ok: false, reason: "坐标无效" };
-    if (!isValidDigit(value)) return { ok: false, reason: "数字无效" };
+    if (row < 0 || row > 8 || col < 0 || col > 8) {
+      return { ok: false, reason: "坐标无效" };
+    }
+    if (!isValidDigit(value)) {
+      return { ok: false, reason: "数字无效" };
+    }
     const g = this.puzzle.givens;
-    if (isGiven(g, row, col)) return { ok: false, reason: "不能修改题目给定格" };
+    if (isGiven(g, row, col)) {
+      return { ok: false, reason: "不能修改题目给定格" };
+    }
     const before = me.grid[row]![col]!;
     const after = value as Digit;
-    if (before === after) return { ok: true };
+    if (before === after) {
+      return { ok: true };
+    }
     me.grid[row]![col] = after;
     me.history.push({ row, col, before, after });
     if (isSolved(me.grid, this.puzzle.solution)) {
@@ -182,16 +226,26 @@ export class Room {
   applyItem(
     fromId: string,
     type: ItemType,
-    row: number | undefined,
-    now: number,
+    _row: number | undefined,
+    now: number
   ): { ok: true } | { ok: false; reason: string } {
-    if (this.phase !== "playing" || !this.puzzle) return { ok: false, reason: "未在对局中" };
+    if (this.phase !== "playing" || !this.puzzle) {
+      return { ok: false, reason: "未在对局中" };
+    }
     const me = this.players.get(fromId);
     const victimId = this.opponentOf(fromId);
-    if (!me || !victimId) return { ok: false, reason: "对手不存在" };
-    if (me.itemUses >= ITEM_MAX_PER_GAME) return { ok: false, reason: "本局道具次数已用尽" };
-    if (now < me.itemReadyAt) return { ok: false, reason: "道具冷却中" };
-    if (now < me.silenceUntil) return { ok: false, reason: "沉默中，无法使用技能" };
+    if (!(me && victimId)) {
+      return { ok: false, reason: "对手不存在" };
+    }
+    if (me.itemUses >= ITEM_MAX_PER_GAME) {
+      return { ok: false, reason: "本局道具次数已用尽" };
+    }
+    if (now < me.itemReadyAt) {
+      return { ok: false, reason: "道具冷却中" };
+    }
+    if (now < me.silenceUntil) {
+      return { ok: false, reason: "沉默中，无法使用技能" };
+    }
 
     const victim = this.players.get(victimId)!;
     const g = this.puzzle.givens;
@@ -200,11 +254,20 @@ export class Room {
       const kind = Math.floor(Math.random() * 3);
       const idx = Math.floor(Math.random() * 9);
       if (kind === 0) {
-        victim.rowBlindUntil[idx] = Math.max(victim.rowBlindUntil[idx]!, now + ROW_BLIND_MS);
+        victim.rowBlindUntil[idx] = Math.max(
+          victim.rowBlindUntil[idx]!,
+          now + ROW_BLIND_MS
+        );
       } else if (kind === 1) {
-        victim.colBlindUntil[idx] = Math.max(victim.colBlindUntil[idx]!, now + ROW_BLIND_MS);
+        victim.colBlindUntil[idx] = Math.max(
+          victim.colBlindUntil[idx]!,
+          now + ROW_BLIND_MS
+        );
       } else {
-        victim.boxBlindUntil[idx] = Math.max(victim.boxBlindUntil[idx]!, now + ROW_BLIND_MS);
+        victim.boxBlindUntil[idx] = Math.max(
+          victim.boxBlindUntil[idx]!,
+          now + ROW_BLIND_MS
+        );
       }
     } else if (type === "undo_three") {
       let n = 0;
@@ -216,7 +279,9 @@ export class Room {
     } else if (type === "freeze") {
       victim.freezeUntil = Math.max(victim.freezeUntil, now + FREEZE_MS);
     } else if (type === "eraser_one") {
-      if (victim.history.length === 0) return { ok: false, reason: "对手没有可擦除的手写" };
+      if (victim.history.length === 0) {
+        return { ok: false, reason: "对手没有可擦除的手写" };
+      }
       const rec = victim.history.pop()!;
       victim.grid[rec.row]![rec.col] = rec.before;
     } else if (type === "silence") {
@@ -225,33 +290,51 @@ export class Room {
       const candidates: [number, number][] = [];
       for (let r = 0; r < 9; r++) {
         for (let c = 0; c < 9; c++) {
-          if (isGiven(g, r, c)) continue;
-          if (victim.grid[r]![c]! === 0) continue;
+          if (isGiven(g, r, c)) {
+            continue;
+          }
+          if (victim.grid[r]![c]! === 0) {
+            continue;
+          }
           candidates.push([r, c]);
         }
       }
-      if (candidates.length === 0) return { ok: false, reason: "对手没有可锁的手写格" };
+      if (candidates.length === 0) {
+        return { ok: false, reason: "对手没有可锁的手写格" };
+      }
       const pick = candidates[Math.floor(Math.random() * candidates.length)]!;
       victim.cellLockRow = pick[0];
       victim.cellLockCol = pick[1];
       victim.cellLockUntil = now + CELL_LOCK_MS;
     } else if (type === "cooldown_hurt") {
-      victim.itemReadyAt = Math.max(victim.itemReadyAt, now + COOLDOWN_SPIKE_MS);
+      victim.itemReadyAt = Math.max(
+        victim.itemReadyAt,
+        now + COOLDOWN_SPIKE_MS
+      );
     } else if (type === "bomb_digit") {
       const bombCandidates: [number, number][] = [];
       for (let r = 0; r < 9; r++) {
         for (let c = 0; c < 9; c++) {
-          if (isGiven(g, r, c)) continue;
-          if (victim.grid[r]![c]! === 0) continue;
+          if (isGiven(g, r, c)) {
+            continue;
+          }
+          if (victim.grid[r]![c]! === 0) {
+            continue;
+          }
           bombCandidates.push([r, c]);
         }
       }
-      if (bombCandidates.length === 0) return { ok: false, reason: "对手没有可炸掉的手写数字" };
-      const bombPick = bombCandidates[Math.floor(Math.random() * bombCandidates.length)]!;
+      if (bombCandidates.length === 0) {
+        return { ok: false, reason: "对手没有可炸掉的手写数字" };
+      }
+      const bombPick =
+        bombCandidates[Math.floor(Math.random() * bombCandidates.length)]!;
       const br = bombPick[0];
       const bc = bombPick[1];
       victim.grid[br]![bc] = 0 as Digit;
-      victim.history = victim.history.filter((rec) => rec.row !== br || rec.col !== bc);
+      victim.history = victim.history.filter(
+        (rec) => rec.row !== br || rec.col !== bc
+      );
     } else {
       return { ok: false, reason: "未知道具" };
     }
@@ -263,17 +346,27 @@ export class Room {
 
   pruneEffects(now: number): void {
     for (const p of this.players.values()) {
-      if (now >= p.freezeUntil) p.freezeUntil = 0;
-      if (now >= p.silenceUntil) p.silenceUntil = 0;
+      if (now >= p.freezeUntil) {
+        p.freezeUntil = 0;
+      }
+      if (now >= p.silenceUntil) {
+        p.silenceUntil = 0;
+      }
       if (p.cellLockRow >= 0 && now >= p.cellLockUntil) {
         p.cellLockRow = -1;
         p.cellLockCol = -1;
         p.cellLockUntil = 0;
       }
       for (let r = 0; r < 9; r++) {
-        if (now >= p.rowBlindUntil[r]!) p.rowBlindUntil[r] = 0;
-        if (now >= p.colBlindUntil[r]!) p.colBlindUntil[r] = 0;
-        if (now >= p.boxBlindUntil[r]!) p.boxBlindUntil[r] = 0;
+        if (now >= p.rowBlindUntil[r]!) {
+          p.rowBlindUntil[r] = 0;
+        }
+        if (now >= p.colBlindUntil[r]!) {
+          p.colBlindUntil[r] = 0;
+        }
+        if (now >= p.boxBlindUntil[r]!) {
+          p.boxBlindUntil[r] = 0;
+        }
       }
     }
   }
@@ -304,8 +397,12 @@ export class Room {
   }
 
   voteRematch(socketId: string): { ok: true } | { ok: false; reason: string } {
-    if (this.phase !== "done") return { ok: false, reason: "只有本局结束后才能再来一局" };
-    if (!this.players.has(socketId)) return { ok: false, reason: "不在房间内" };
+    if (this.phase !== "done") {
+      return { ok: false, reason: "只有本局结束后才能再来一局" };
+    }
+    if (!this.players.has(socketId)) {
+      return { ok: false, reason: "不在房间内" };
+    }
     this.rematchAck.add(socketId);
     if (this.rematchAck.size >= 2) {
       this.resetToLobbyAfterMatch();
@@ -315,10 +412,14 @@ export class Room {
 }
 
 function emptyGrid(): Grid9 {
-  return Array.from({ length: 9 }, () => Array.from({ length: 9 }, () => 0 as Digit));
+  return Array.from({ length: 9 }, () =>
+    Array.from({ length: 9 }, () => 0 as Digit)
+  );
 }
 
-export function publicLobbyPlayers(room: Room): { id: string; name: string; ready: boolean }[] {
+export function publicLobbyPlayers(
+  room: Room
+): { id: string; name: string; ready: boolean }[] {
   return [...room.players.entries()].map(([id, p]) => ({
     id,
     name: p.name,
@@ -331,7 +432,7 @@ export function buildPersonalState(room: Room, myId: string, now: number) {
   const me = room.players.get(myId);
   const oppId = room.opponentOf(myId);
   const opp = oppId ? room.players.get(oppId) : undefined;
-  if (!me || !room.puzzle) {
+  if (!(me && room.puzzle)) {
     return {
       phase: room.phase,
       roomId: room.id,
@@ -345,7 +446,9 @@ export function buildPersonalState(room: Room, myId: string, now: number) {
       rivalName: opp?.name ?? "等待对手",
       rivalFilled: opp ? filledCount(opp.grid) : 0,
       winnerId: room.winnerId,
-      winnerName: room.winnerId ? room.players.get(room.winnerId)?.name ?? null : null,
+      winnerName: room.winnerId
+        ? (room.players.get(room.winnerId)?.name ?? null)
+        : null,
       itemUses: me?.itemUses ?? 0,
       itemReadyAt: me?.itemReadyAt ?? 0,
       itemMax: ITEM_MAX_PER_GAME,
@@ -357,7 +460,11 @@ export function buildPersonalState(room: Room, myId: string, now: number) {
       silenceUntil: me?.silenceUntil ?? 0,
       cellLocked:
         me && me.cellLockRow >= 0 && now < me.cellLockUntil
-          ? { row: me.cellLockRow, col: me.cellLockCol, until: me.cellLockUntil }
+          ? {
+              row: me.cellLockRow,
+              col: me.cellLockCol,
+              until: me.cellLockUntil,
+            }
           : null,
       rematchVotes: [...room.rematchAck],
       lobbyDifficulty: room.lobbyDifficulty,
@@ -377,7 +484,9 @@ export function buildPersonalState(room: Room, myId: string, now: number) {
     rivalName: opp?.name ?? "对手",
     rivalFilled: opp ? filledCount(opp.grid) : 0,
     winnerId: room.winnerId,
-    winnerName: room.winnerId ? room.players.get(room.winnerId)?.name ?? null : null,
+    winnerName: room.winnerId
+      ? (room.players.get(room.winnerId)?.name ?? null)
+      : null,
     itemUses: me.itemUses,
     itemReadyAt: me.itemReadyAt,
     itemMax: ITEM_MAX_PER_GAME,

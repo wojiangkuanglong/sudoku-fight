@@ -1,17 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
 import {
   allConflictKeys,
-  filledCount,
   type Difficulty,
   type Digit,
+  filledCount,
   type Grid9,
   type ItemType,
 } from "@sudoku-fight/shared";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { io, type Socket } from "socket.io-client";
 import { SudokuBoardPixi } from "./game/SudokuBoardPixi.js";
 
 const SERVER =
-  typeof import.meta.env.VITE_SERVER_URL === "string" && import.meta.env.VITE_SERVER_URL
+  typeof import.meta.env.VITE_SERVER_URL === "string" &&
+  import.meta.env.VITE_SERVER_URL
     ? import.meta.env.VITE_SERVER_URL
     : "http://localhost:3001";
 
@@ -24,32 +25,32 @@ interface LobbyPlayer {
 }
 
 interface GameStatePayload {
-  phase: Phase;
-  roomId: string;
-  you: { id: string; name: string };
+  boxBlindUntil: number[];
+  cellLocked: { row: number; col: number; until: number } | null;
+  colBlindUntil: number[];
+  finishedAt: number | null;
+  frozenUntil: number;
+  gameStartedAt: number | null;
   givens: Grid9 | null;
   grid: Grid9 | null;
-  frozenUntil: number;
-  rowBlindUntil: number[];
-  colBlindUntil: number[];
-  boxBlindUntil: number[];
-  rivalName: string;
-  rivalFilled: number;
-  winnerId: string | null;
-  winnerName: string | null;
-  itemUses: number;
-  itemReadyAt: number;
-  itemMax: number;
   itemCooldownMs: number;
-  gameStartedAt: number | null;
-  finishedAt: number | null;
-  puzzleId: string | null;
-  puzzleDifficulty: Difficulty | null;
-  silenceUntil: number;
-  cellLocked: { row: number; col: number; until: number } | null;
-  rematchVotes: string[];
+  itemMax: number;
+  itemReadyAt: number;
+  itemUses: number;
   /** 下一局将使用的难度（大厅内可选，对局/结算中仅展示） */
   lobbyDifficulty: Difficulty;
+  phase: Phase;
+  puzzleDifficulty: Difficulty | null;
+  puzzleId: string | null;
+  rematchVotes: string[];
+  rivalFilled: number;
+  rivalName: string;
+  roomId: string;
+  rowBlindUntil: number[];
+  silenceUntil: number;
+  winnerId: string | null;
+  winnerName: string | null;
+  you: { id: string; name: string };
 }
 
 const DIFFICULTY_LABEL: Record<Difficulty, string> = {
@@ -67,8 +68,8 @@ function noopSelectCell(_row: number, _col: number) {}
 
 /** 手游风计时：始终 mm:ss */
 function formatClock(ms: number): string {
-  if (ms < 0) ms = 0;
-  const s = Math.floor(ms / 1000);
+  const clamped = ms < 0 ? 0 : ms;
+  const s = Math.floor(clamped / 1000);
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
@@ -83,7 +84,12 @@ const popoverClearBtn =
 /** 浮层约 sm:w-[8.5rem]，clamp 用半宽避免左右裁切 */
 const POPOVER_HALF_REM = 4.25;
 
-const SKILL_ROWS: { type: ItemType; icon: string; label: string; hint: string }[] = [
+const SKILL_ROWS: {
+  type: ItemType;
+  icon: string;
+  label: string;
+  hint: string;
+}[] = [
   {
     type: "area_blind",
     icon: "🌫️",
@@ -95,8 +101,18 @@ const SKILL_ROWS: { type: ItemType; icon: string; label: string; hint: string }[
   { type: "eraser_one", icon: "🧽", label: "单擦", hint: "撤销对手最近一步" },
   { type: "silence", icon: "🤐", label: "禁言", hint: "对手暂时无法施放技能" },
   { type: "lock_cell", icon: "🔒", label: "锁格", hint: "暂时锁住对手一格" },
-  { type: "cooldown_hurt", icon: "⏳", label: "扰乱", hint: "拉长对手技能冷却" },
-  { type: "bomb_digit", icon: "💣", label: "炸弹", hint: "随机清空对手一格手写数字" },
+  {
+    type: "cooldown_hurt",
+    icon: "⏳",
+    label: "扰乱",
+    hint: "拉长对手技能冷却",
+  },
+  {
+    type: "bomb_digit",
+    icon: "💣",
+    label: "炸弹",
+    hint: "随机清空对手一格手写数字",
+  },
 ];
 
 const skillDrawerRowBtn =
@@ -118,13 +134,18 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [copyHint, setCopyHint] = useState(false);
-  const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
+  const [selectedCell, setSelectedCell] = useState<{
+    row: number;
+    col: number;
+  } | null>(null);
   const [skillDrawerOpen, setSkillDrawerOpen] = useState(false);
   const boardWrapRef = useRef<HTMLDivElement>(null);
 
   const [theme, setTheme] = useState<ThemeChoice>(() => {
     try {
-      return localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+      return localStorage.getItem(THEME_STORAGE_KEY) === "light"
+        ? "light"
+        : "dark";
     } catch {
       return "dark";
     }
@@ -179,13 +200,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!error) return;
+    if (!error) {
+      return;
+    }
     const t = window.setTimeout(() => setError(null), 4800);
     return () => window.clearTimeout(t);
   }, [error]);
 
   useEffect(() => {
-    if (!game || (game.phase !== "playing" && game.phase !== "done")) return;
+    if (!game || (game.phase !== "playing" && game.phase !== "done")) {
+      return;
+    }
     const id = window.setInterval(() => setTick((x) => x + 1), 250);
     return () => window.clearInterval(id);
   }, [game?.phase]);
@@ -198,11 +223,14 @@ export default function App() {
   const frozen = Boolean(game && game.frozenUntil > now);
   const silenced = Boolean(game && game.silenceUntil > now);
   const blindRows =
-    game?.rowBlindUntil?.map((until) => until > now) ?? Array.from({ length: 9 }, () => false);
+    game?.rowBlindUntil?.map((until) => until > now) ??
+    Array.from({ length: 9 }, () => false);
   const blindCols =
-    game?.colBlindUntil?.map((until) => until > now) ?? Array.from({ length: 9 }, () => false);
+    game?.colBlindUntil?.map((until) => until > now) ??
+    Array.from({ length: 9 }, () => false);
   const blindBoxes =
-    game?.boxBlindUntil?.map((until) => until > now) ?? Array.from({ length: 9 }, () => false);
+    game?.boxBlindUntil?.map((until) => until > now) ??
+    Array.from({ length: 9 }, () => false);
 
   const lockedCellVisual =
     game?.cellLocked && now < game.cellLocked.until
@@ -214,11 +242,13 @@ export default function App() {
       game?.cellLocked &&
       now < game.cellLocked.until &&
       selectedCell.row === game.cellLocked.row &&
-      selectedCell.col === game.cellLocked.col,
+      selectedCell.col === game.cellLocked.col
   );
 
   const conflictSet = useMemo(() => {
-    if (!game?.grid) return new Set<string>();
+    if (!game?.grid) {
+      return new Set<string>();
+    }
     return allConflictKeys(game.grid);
   }, [game?.grid]);
 
@@ -241,7 +271,9 @@ export default function App() {
   };
 
   const copyRoomId = async () => {
-    if (!roomId) return;
+    if (!roomId) {
+      return;
+    }
     try {
       await navigator.clipboard.writeText(roomId);
       setCopyHint(true);
@@ -253,9 +285,15 @@ export default function App() {
 
   const onSelectCell = useCallback(
     (row: number, col: number) => {
-      if (!game?.givens) return;
-      if (game.givens[row]![col]! !== 0) return;
-      if (frozen) return;
+      if (!game?.givens) {
+        return;
+      }
+      if (game.givens[row]![col]! !== 0) {
+        return;
+      }
+      if (frozen) {
+        return;
+      }
       if (
         game.cellLocked &&
         now < game.cellLocked.until &&
@@ -266,13 +304,17 @@ export default function App() {
       }
       setSelectedCell({ row, col });
     },
-    [game?.givens, game?.cellLocked, frozen, now],
+    [game?.givens, game?.cellLocked, frozen, now]
   );
 
   const applyDigit = useCallback(
     (value: Digit) => {
-      if (!selectedCell || !socket || !game?.givens) return;
-      if (game.givens[selectedCell.row]![selectedCell.col]! !== 0) return;
+      if (!(selectedCell && socket && game?.givens)) {
+        return;
+      }
+      if (game.givens[selectedCell.row]![selectedCell.col]! !== 0) {
+        return;
+      }
       if (
         game.cellLocked &&
         now < game.cellLocked.until &&
@@ -288,7 +330,7 @@ export default function App() {
       });
       setSelectedCell(null);
     },
-    [selectedCell, socket, game?.givens, game?.cellLocked, now],
+    [selectedCell, socket, game?.givens, game?.cellLocked, now]
   );
 
   const canUseItem =
@@ -300,19 +342,21 @@ export default function App() {
   const canCastSkill = Boolean(canUseItem && !silenced);
 
   const cooldownLeftSec =
-    game && now < game.itemReadyAt ? Math.ceil((game.itemReadyAt - now) / 1000) : 0;
+    game && now < game.itemReadyAt
+      ? Math.ceil((game.itemReadyAt - now) / 1000)
+      : 0;
 
   const cooldownProgress =
     game && cooldownLeftSec > 0
       ? Math.max(0, 1 - (game.itemReadyAt - now) / game.itemCooldownMs)
       : 0;
 
-  const useItem = useCallback(
+  const sendGameItem = useCallback(
     (type: ItemType, row?: number) => {
       setError(null);
       socket?.emit("game:item", { type, row });
     },
-    [socket],
+    [socket]
   );
 
   const requestRematch = () => {
@@ -320,18 +364,25 @@ export default function App() {
     socket?.emit("lobby:rematch");
   };
 
-  const inLobby = Boolean(roomId) && game?.phase !== "playing" && game?.phase !== "done";
+  const inLobby =
+    Boolean(roomId) && game?.phase !== "playing" && game?.phase !== "done";
   const playing = game?.phase === "playing";
   const done = game?.phase === "done";
 
   useEffect(() => {
-    if (!playing || !selectedCell || frozen) return;
+    if (!(playing && selectedCell) || frozen) {
+      return;
+    }
     const wrap = boardWrapRef.current;
-    if (!wrap) return;
+    if (!wrap) {
+      return;
+    }
 
     const onPointerDown = (e: PointerEvent) => {
       const t = e.target as Node;
-      if (wrap.contains(t)) return;
+      if (wrap.contains(t)) {
+        return;
+      }
       setSelectedCell(null);
     };
 
@@ -340,7 +391,9 @@ export default function App() {
   }, [playing, selectedCell, frozen]);
 
   useEffect(() => {
-    if (!selectedCell || !game?.cellLocked) return;
+    if (!(selectedCell && game?.cellLocked)) {
+      return;
+    }
     const t = Date.now();
     if (
       t < game.cellLocked.until &&
@@ -367,17 +420,19 @@ export default function App() {
 
   const popoverPlacementBelow = selectedCell !== null && selectedCell.row < 2;
   const popoverCenterXPct =
-    selectedCell !== null ? ((selectedCell.col + 0.5) / 9) * 100 : 0;
+    selectedCell === null ? 0 : ((selectedCell.col + 0.5) / 9) * 100;
 
   useEffect(() => {
-    if (!playing) setSkillDrawerOpen(false);
+    if (!playing) {
+      setSkillDrawerOpen(false);
+    }
   }, [playing]);
 
   const boardScheme = theme === "light" ? "light" : "dark";
 
   return (
     <>
-      <div className="sf-page-deco" aria-hidden>
+      <div aria-hidden className="sf-page-deco">
         <div className="sf-page-deco__grid" />
         <div className="sf-page-deco__orb sf-page-deco__orb--a" />
         <div className="sf-page-deco__orb sf-page-deco__orb--b" />
@@ -387,25 +442,25 @@ export default function App() {
         {/* 顶栏：品牌 + 主题 + 在线状态 */}
         <header className="mb-2 flex shrink-0 items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2.5">
-            <div className="sf-glow-ring flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sf-accent to-teal-600 text-lg font-black text-slate-950 shadow-lg">
+            <div className="sf-glow-ring flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sf-accent to-teal-600 font-black text-lg text-slate-950 shadow-lg">
               9
             </div>
             <div className="min-w-0">
-              <h1 className="truncate text-[1.15rem] font-black tracking-tight text-sf-text sm:text-xl">
+              <h1 className="truncate font-black text-[1.15rem] text-sf-text tracking-tight sm:text-xl">
                 数独对决
               </h1>
-              <p className="text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-sf-muted">
+              <p className="font-semibold text-[0.6rem] text-sf-muted uppercase tracking-[0.22em]">
                 Battle
               </p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button
-              type="button"
+              aria-label={theme === "dark" ? "切换浅色模式" : "切换深色模式"}
               className="flex h-9 w-9 items-center justify-center rounded-xl border border-sf-divider bg-sf-inset text-base shadow-sm transition active:scale-95"
               onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
               title={theme === "dark" ? "切换浅色模式" : "切换深色模式"}
-              aria-label={theme === "dark" ? "切换浅色模式" : "切换深色模式"}
+              type="button"
             >
               {theme === "dark" ? "☀️" : "🌙"}
             </button>
@@ -413,14 +468,16 @@ export default function App() {
               <span
                 className={`h-2 w-2 rounded-full ${socket ? "bg-emerald-400 shadow-[0_0_10px_#34d399]" : "bg-sf-muted"}`}
               />
-              <span className="text-[0.65rem] font-bold text-sf-muted">{socket ? "在线" : "连接中"}</span>
+              <span className="font-bold text-[0.65rem] text-sf-muted">
+                {socket ? "在线" : "连接中"}
+              </span>
             </div>
           </div>
         </header>
 
         {error && (
           <div
-            className="sf-error-toast fixed left-1/2 top-[max(5.5rem,env(safe-area-inset-top)+3.5rem)] z-60 max-w-[min(92vw,22rem)] -translate-x-1/2 px-4 py-2.5"
+            className="sf-error-toast fixed top-[max(5.5rem,env(safe-area-inset-top)+3.5rem)] left-1/2 z-60 max-w-[min(92vw,22rem)] -translate-x-1/2 px-4 py-2.5"
             role="status"
           >
             {error}
@@ -428,433 +485,505 @@ export default function App() {
         )}
 
         <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-2">
-        {/* 登录 / 开房 */}
-        {!roomId && (
-          <section className="sf-glass sf-glow-ring relative overflow-hidden rounded-3xl p-5">
-            <div className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-sf-magic/20 blur-3xl" />
-            <div className="pointer-events-none absolute -bottom-10 -left-10 h-36 w-36 rounded-full bg-sf-accent/10 blur-3xl" />
-            <p className="mb-1 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-sf-accent">对战大厅</p>
-            <h2 className="mb-4 text-2xl font-black text-sf-text">开始匹配</h2>
-            <label className="mb-4 block text-xs font-bold text-sf-muted">
-              玩家昵称
-              <input
-                className="mt-1.5 min-h-12 w-full rounded-2xl border border-sf-divider bg-sf-inset px-4 text-base font-semibold text-sf-text outline-none ring-sf-accent/30 placeholder:text-sf-placeholder focus:ring-2"
-                type="text"
-                placeholder="输入昵称"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </label>
-            <div className="flex flex-col gap-3">
-              <button type="button" className={ctaPrimary} onClick={createRoom} disabled={!socket}>
-                创建房间
-              </button>
-              <div className="flex gap-2">
+          {/* 登录 / 开房 */}
+          {!roomId && (
+            <section className="sf-glass sf-glow-ring relative overflow-hidden rounded-3xl p-5">
+              <div className="pointer-events-none absolute -top-8 -right-8 h-32 w-32 rounded-full bg-sf-magic/20 blur-3xl" />
+              <div className="pointer-events-none absolute -bottom-10 -left-10 h-36 w-36 rounded-full bg-sf-accent/10 blur-3xl" />
+              <p className="mb-1 font-bold text-[0.65rem] text-sf-accent uppercase tracking-[0.2em]">
+                对战大厅
+              </p>
+              <h2 className="mb-4 font-black text-2xl text-sf-text">
+                开始匹配
+              </h2>
+              <label className="mb-4 block font-bold text-sf-muted text-xs">
+                玩家昵称
                 <input
-                  className="min-h-12 min-w-0 flex-1 rounded-2xl border border-sf-divider bg-sf-inset px-3 text-center font-mono text-base font-bold tracking-[0.2em] text-sf-text outline-none ring-sf-magic/30 focus:ring-2"
+                  className="mt-1.5 min-h-12 w-full rounded-2xl border border-sf-divider bg-sf-inset px-4 font-semibold text-base text-sf-text outline-none ring-sf-accent/30 placeholder:text-sf-placeholder focus:ring-2"
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="输入昵称"
                   type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  maxLength={6}
-                  placeholder="6 位数字"
-                  value={roomIdInput}
-                  onChange={(e) => setRoomIdInput(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  value={name}
                 />
+              </label>
+              <div className="flex flex-col gap-3">
                 <button
-                  type="button"
-                  className={`${ctaSecondary} max-w-[6.5rem] shrink-0 px-2`}
-                  onClick={joinRoom}
+                  className={ctaPrimary}
                   disabled={!socket}
+                  onClick={createRoom}
+                  type="button"
                 >
-                  加入
+                  创建房间
                 </button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {roomId && (game === null || game.phase === "lobby") && (
-          <section className="sf-glass rounded-3xl p-4">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <p className="text-[0.6rem] font-bold uppercase tracking-widest text-sf-muted">房间码</p>
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-2xl font-black tracking-[0.2em] text-sf-accent sf-text-glow">
-                    {roomId}
-                  </span>
+                <div className="flex gap-2">
+                  <input
+                    autoComplete="off"
+                    className="min-h-12 min-w-0 flex-1 rounded-2xl border border-sf-divider bg-sf-inset px-3 text-center font-bold font-mono text-base text-sf-text tracking-[0.2em] outline-none ring-sf-magic/30 focus:ring-2"
+                    inputMode="numeric"
+                    maxLength={6}
+                    onChange={(e) =>
+                      setRoomIdInput(
+                        e.target.value.replace(/\D/g, "").slice(0, 6)
+                      )
+                    }
+                    placeholder="6 位数字"
+                    type="text"
+                    value={roomIdInput}
+                  />
                   <button
+                    className={`${ctaSecondary} max-w-[6.5rem] shrink-0 px-2`}
+                    disabled={!socket}
+                    onClick={joinRoom}
                     type="button"
-                    className="rounded-full border border-sf-divider bg-sf-chip px-3 py-1 text-[0.65rem] font-bold text-sf-muted active:opacity-80"
-                    onClick={() => void copyRoomId()}
                   >
-                    {copyHint ? "已复制" : "复制"}
+                    加入
                   </button>
                 </div>
               </div>
-              {game && (
-                <div className="text-right">
-                  <p className="text-[0.6rem] font-bold text-sf-muted">当前身份</p>
-                  <p className="max-w-[9rem] truncate text-sm font-black text-sf-text">{game.you.name}</p>
+            </section>
+          )}
+
+          {roomId && (game === null || game.phase === "lobby") && (
+            <section className="sf-glass rounded-3xl p-4">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <p className="font-bold text-[0.6rem] text-sf-muted uppercase tracking-widest">
+                    房间码
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <span className="sf-text-glow font-black font-mono text-2xl text-sf-accent tracking-[0.2em]">
+                      {roomId}
+                    </span>
+                    <button
+                      className="rounded-full border border-sf-divider bg-sf-chip px-3 py-1 font-bold text-[0.65rem] text-sf-muted active:opacity-80"
+                      onClick={() => void copyRoomId()}
+                      type="button"
+                    >
+                      {copyHint ? "已复制" : "复制"}
+                    </button>
+                  </div>
+                </div>
+                {game && (
+                  <div className="text-right">
+                    <p className="font-bold text-[0.6rem] text-sf-muted">
+                      当前身份
+                    </p>
+                    <p className="max-w-[9rem] truncate font-black text-sf-text text-sm">
+                      {game.you.name}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4">
+                <p className="mb-1.5 text-center font-bold text-[0.65rem] text-sf-muted uppercase tracking-widest">
+                  本局难度
+                </p>
+                <div className="flex gap-2">
+                  {DIFFICULTY_OPTIONS.map((d) => (
+                    <button
+                      className={`min-h-11 flex-1 rounded-xl border px-1 py-2 font-black text-xs transition sm:text-sm ${
+                        game && game.lobbyDifficulty === d
+                          ? "border-sf-accent/60 bg-sf-accent/20 text-sf-accent"
+                          : "border-sf-divider bg-sf-inset text-sf-muted disabled:opacity-40"
+                      }`}
+                      disabled={!(socket && game)}
+                      key={d}
+                      onClick={() => {
+                        setError(null);
+                        socket?.emit("lobby:difficulty", { difficulty: d });
+                      }}
+                      type="button"
+                    >
+                      {DIFFICULTY_LABEL[d]}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-2 text-center text-[0.6rem] text-sf-muted leading-relaxed">
+                  开战前任选；切换难度会取消双方准备
+                </p>
+              </div>
+
+              {inLobby && (
+                <div className="mt-5 space-y-4">
+                  <p className="text-center font-bold text-[0.65rem] text-sf-muted uppercase tracking-widest">
+                    玩家席位
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[0, 1].map((i) => {
+                      const p = roster[i];
+                      return (
+                        <div
+                          className="flex flex-col items-center rounded-2xl border border-sf-divider bg-sf-inset p-3"
+                          key={p?.id ?? `slot-${i}`}
+                        >
+                          <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-sf-accent/25 to-sf-magic/20 font-black text-2xl text-sf-text ring-2 ring-sf-divider">
+                            {p ? p.name.slice(0, 1) : "?"}
+                          </div>
+                          <p className="w-full truncate text-center font-bold text-sf-text text-sm">
+                            {p?.name ?? "等待加入…"}
+                          </p>
+                          <p
+                            className={`mt-1 font-bold text-[0.65rem] ${p?.ready ? "text-sf-accent" : "text-sf-muted"}`}
+                          >
+                            {p ? (p.ready ? "已准备" : "未准备") : "空位"}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    className={ctaPrimary}
+                    disabled={!socket}
+                    onClick={toggleReady}
+                    type="button"
+                  >
+                    {selfReady ? "取消准备" : "准备开战"}
+                  </button>
                 </div>
               )}
-            </div>
+            </section>
+          )}
 
-            <div className="mt-4">
-              <p className="mb-1.5 text-center text-[0.65rem] font-bold uppercase tracking-widest text-sf-muted">
-                本局难度
-              </p>
-              <div className="flex gap-2">
-                {DIFFICULTY_OPTIONS.map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    disabled={!socket || !game}
-                    className={`min-h-11 flex-1 rounded-xl border px-1 py-2 text-xs font-black transition sm:text-sm ${
-                      game && game.lobbyDifficulty === d
-                        ? "border-sf-accent/60 bg-sf-accent/20 text-sf-accent"
-                        : "border-sf-divider bg-sf-inset text-sf-muted disabled:opacity-40"
-                    }`}
-                    onClick={() => {
-                      setError(null);
-                      socket?.emit("lobby:difficulty", { difficulty: d });
-                    }}
-                  >
-                    {DIFFICULTY_LABEL[d]}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-2 text-center text-[0.6rem] leading-relaxed text-sf-muted">
-                开战前任选；切换难度会取消双方准备
-              </p>
-            </div>
-
-            {inLobby && (
-              <div className="mt-5 space-y-4">
-                <p className="text-center text-[0.65rem] font-bold uppercase tracking-widest text-sf-muted">
-                  玩家席位
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {[0, 1].map((i) => {
-                    const p = roster[i];
-                    return (
-                      <div
-                        key={p?.id ?? `slot-${i}`}
-                        className="flex flex-col items-center rounded-2xl border border-sf-divider bg-sf-inset p-3"
-                      >
-                        <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-sf-accent/25 to-sf-magic/20 text-2xl font-black text-sf-text ring-2 ring-sf-divider">
-                          {p ? p.name.slice(0, 1) : "?"}
-                        </div>
-                        <p className="w-full truncate text-center text-sm font-bold text-sf-text">
-                          {p?.name ?? "等待加入…"}
-                        </p>
-                        <p
-                          className={`mt-1 text-[0.65rem] font-bold ${p?.ready ? "text-sf-accent" : "text-sf-muted"}`}
-                        >
-                          {p ? (p.ready ? "已准备" : "未准备") : "空位"}
-                        </p>
-                      </div>
-                    );
-                  })}
+          {playing && game?.grid && game.givens && (
+            <>
+              {frozen && (
+                <div className="sf-banner-frozen">
+                  <span aria-hidden className="text-xl">
+                    ❄️
+                  </span>
+                  <p className="font-bold text-sm">冰冻中！暂时无法填数</p>
                 </div>
-                <button type="button" className={ctaPrimary} onClick={toggleReady} disabled={!socket}>
-                  {selfReady ? "取消准备" : "准备开战"}
+              )}
+              {silenced && (
+                <div className="sf-banner-silence">
+                  <span aria-hidden className="text-xl">
+                    🤐
+                  </span>
+                  <p className="font-bold text-sm">
+                    禁言中！本段时间无法使用干扰技能
+                  </p>
+                </div>
+              )}
+
+              <div className="sf-glass flex flex-col gap-2 rounded-3xl p-3 sm:p-4">
+                <div className="flex gap-2">
+                  <div className="sf-glow-ring flex flex-1 flex-col rounded-2xl border border-sf-divider bg-sf-inset px-3 py-2">
+                    <span className="font-black text-[0.55rem] text-sf-muted uppercase tracking-[0.2em]">
+                      对局时间
+                    </span>
+                    <span className="sf-text-glow font-black font-mono text-2xl text-sf-accent tabular-nums">
+                      {formatClock(elapsedMs)}
+                    </span>
+                  </div>
+                  <div className="flex flex-1 flex-col justify-center rounded-2xl border border-sf-divider bg-sf-inset px-3 py-2">
+                    <span className="font-black text-[0.55rem] text-sf-muted uppercase tracking-[0.2em]">
+                      对手
+                    </span>
+                    <span className="truncate font-black text-sf-text text-sm">
+                      {game.rivalName}
+                    </span>
+                    <span className="font-bold text-[0.65rem] text-sf-magic">
+                      {game.rivalFilled} 格
+                    </span>
+                  </div>
+                  <div className="flex w-[4.25rem] flex-col items-center justify-center rounded-2xl border border-sf-gold/30 bg-sf-inset py-1">
+                    <span className="font-black text-[0.5rem] text-sf-muted">
+                      技能
+                    </span>
+                    <span className="font-black text-2xl text-sf-gold">
+                      {skillsRemaining}
+                    </span>
+                  </div>
+                </div>
+                {game.puzzleId && (
+                  <p className="text-center font-bold text-[0.6rem] text-sf-muted">
+                    关卡{" "}
+                    <span className="font-mono text-sf-text">
+                      {game.puzzleId}
+                    </span>
+                    {game.puzzleDifficulty && (
+                      <>
+                        {" "}
+                        · 难度{" "}
+                        <span className="text-sf-gold">
+                          {DIFFICULTY_LABEL[game.puzzleDifficulty]}
+                        </span>
+                      </>
+                    )}{" "}
+                    · 已填 <span className="text-sf-accent">{selfFilled}</span>
+                    /81
+                  </p>
+                )}
+                <p className="text-center text-[0.6rem] text-sf-muted leading-relaxed">
+                  点可选格子弹出数字板；点空白外区域关闭。重复数字标红，终局须与标解一致。
+                </p>
+                <div
+                  className="relative mx-auto w-full max-w-[min(100%,24rem)] touch-none"
+                  ref={boardWrapRef}
+                >
+                  <SudokuBoardPixi
+                    blindBoxes={blindBoxes}
+                    blindCols={blindCols}
+                    blindRows={blindRows}
+                    colorScheme={boardScheme}
+                    conflicts={conflictSet}
+                    givens={game.givens}
+                    grid={game.grid}
+                    interactive={!frozen}
+                    lockedCell={lockedCellVisual}
+                    onSelectCell={onSelectCell}
+                    readOnly={false}
+                    selected={selectedCell}
+                  />
+                  {selectedCell && !frozen && !isSelectedCellLocked && (
+                    <div
+                      aria-label="填入数字"
+                      className="pointer-events-auto absolute z-20 w-[7.6rem] max-w-[calc(100%-8px)] rounded-2xl border border-sf-accent/40 bg-sf-popover p-2 shadow-lg backdrop-blur-md sm:w-[8.5rem]"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      role="dialog"
+                      style={{
+                        left: `clamp(${POPOVER_HALF_REM}rem, ${popoverCenterXPct}%, calc(100% - ${POPOVER_HALF_REM}rem))`,
+                        top: `${((selectedCell.row + 0.5) / 9) * 100}%`,
+                        transform: popoverPlacementBelow
+                          ? "translate(-50%, 10px)"
+                          : "translate(-50%, calc(-100% - 10px))",
+                      }}
+                    >
+                      <div className="mb-1 text-center font-bold text-[0.55rem] text-sf-muted">
+                        填入
+                      </div>
+                      <div className="grid grid-cols-3 justify-items-center gap-1">
+                        {([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => (
+                          <button
+                            className={popoverDigitBtn}
+                            key={n}
+                            onClick={() => applyDigit(n as Digit)}
+                            type="button"
+                          >
+                            {n}
+                          </button>
+                        ))}
+                        <button
+                          className={popoverClearBtn}
+                          onClick={() => applyDigit(0 as Digit)}
+                          type="button"
+                        >
+                          清除
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {done && game?.grid && game.givens && (
+            <>
+              <section className="sf-glass relative overflow-hidden rounded-3xl p-5 text-center">
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-sf-gold/10 to-transparent" />
+                <p className="relative mb-1 font-black text-[0.65rem] text-sf-gold uppercase tracking-[0.25em]">
+                  本局结果
+                </p>
+                <p className="relative font-black text-2xl text-sf-text sm:text-3xl">
+                  {game.winnerId === game.you.id ? (
+                    <span className="bg-gradient-to-r from-sf-gold via-amber-200 to-sf-gold bg-clip-text text-transparent">
+                      胜利
+                    </span>
+                  ) : (
+                    <span className="text-sf-muted">败北</span>
+                  )}
+                </p>
+                <p className="relative mt-1 font-bold text-sf-muted text-sm">
+                  {game.winnerId === game.you.id
+                    ? "干得漂亮！"
+                    : `胜者：${game.winnerName ?? "对手"}`}
+                </p>
+                {resultMs !== null && (
+                  <p className="relative mt-3 font-black font-mono text-lg text-sf-accent">
+                    {formatClock(resultMs)}
+                  </p>
+                )}
+                {game.puzzleId && (
+                  <p className="relative mt-1 text-[0.65rem] text-sf-muted">
+                    关卡{" "}
+                    <span className="font-mono text-sf-text">
+                      {game.puzzleId}
+                    </span>
+                    {game.puzzleDifficulty && (
+                      <> · {DIFFICULTY_LABEL[game.puzzleDifficulty]}</>
+                    )}
+                  </p>
+                )}
+                <div className="relative mt-4">
+                  <SudokuBoardPixi
+                    blindBoxes={Array.from({ length: 9 }, () => false)}
+                    blindCols={Array.from({ length: 9 }, () => false)}
+                    blindRows={Array.from({ length: 9 }, () => false)}
+                    colorScheme={boardScheme}
+                    conflicts={conflictSet}
+                    givens={game.givens}
+                    grid={game.grid}
+                    interactive={false}
+                    lockedCell={null}
+                    onSelectCell={noopSelectCell}
+                    readOnly
+                    selected={null}
+                  />
+                </div>
+              </section>
+              <section className="sf-glass rounded-3xl p-4">
+                <p className="mb-3 text-center font-bold text-[0.65rem] text-sf-muted">
+                  双方各点一次「再战」返回大厅
+                </p>
+                <button
+                  className={ctaPrimary}
+                  disabled={!socket}
+                  onClick={requestRematch}
+                  type="button"
+                >
+                  {rematchMine ? "已就绪 · 等对手" : "再战一局"}
+                </button>
+                {rematchPartner && !rematchMine && (
+                  <p className="mt-2 text-center font-bold text-sf-accent text-xs">
+                    对手已确认
+                  </p>
+                )}
+              </section>
+            </>
+          )}
+
+          {roomId &&
+            !playing &&
+            !done &&
+            game?.phase === "lobby" &&
+            roster.length === 2 && (
+              <p className="text-center font-bold text-[0.65rem] text-sf-muted">
+                双方准备后立即开局
+              </p>
+            )}
+        </main>
+
+        {/* 技能抽屉：对局中从底部展开，新技能只改 SKILL_ROWS 即可 */}
+        {playing && game?.grid && game.givens && skillDrawerOpen && (
+          <>
+            <button
+              aria-label="关闭技能面板"
+              className="fixed inset-0 z-40 bg-sf-overlay backdrop-blur-[2px]"
+              onClick={() => setSkillDrawerOpen(false)}
+              type="button"
+            />
+            <div
+              aria-label="干扰技能"
+              className="fixed inset-x-0 bottom-0 z-50 flex max-h-[min(72vh,28rem)] flex-col rounded-t-3xl border border-sf-divider border-b-0 bg-sf-drawer pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-12px_40px_rgba(0,0,0,0.18)] backdrop-blur-xl"
+              role="dialog"
+            >
+              <div className="flex shrink-0 items-center justify-between gap-2 border-sf-divider border-b px-4 py-3">
+                <div>
+                  <p className="font-black text-[0.6rem] text-sf-muted uppercase tracking-wider">
+                    干扰技能
+                  </p>
+                  <p className="font-bold text-sf-text text-xs">
+                    剩余 <span className="text-sf-gold">{skillsRemaining}</span>
+                    /{game.itemMax}
+                    {silenced && (
+                      <span className="ml-2 text-amber-300">· 禁言中</span>
+                    )}
+                  </p>
+                </div>
+                <button
+                  className="rounded-full border border-sf-divider bg-sf-chip px-3 py-1.5 font-bold text-sf-muted text-xs active:opacity-80"
+                  onClick={() => setSkillDrawerOpen(false)}
+                  type="button"
+                >
+                  收起
                 </button>
               </div>
-            )}
-          </section>
+              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+                {cooldownLeftSec > 0 && (
+                  <div className="mb-3">
+                    <div className="mb-1 flex items-center justify-between font-bold text-[0.65rem] text-sf-warn-text">
+                      <span>技能冷却</span>
+                      <span>{cooldownLeftSec}s</span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-sf-muted/25">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-sf-accent to-cyan-300 transition-[width] duration-200"
+                        style={{
+                          width: `${Math.min(100, cooldownProgress * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+                <p className="mb-2 font-bold text-[0.55rem] text-sf-muted/90 uppercase tracking-wider">
+                  技能列表
+                </p>
+                <ul className="flex flex-col gap-2">
+                  {SKILL_ROWS.map((s) => (
+                    <li key={s.type}>
+                      <button
+                        className={skillDrawerRowBtn}
+                        disabled={!canCastSkill}
+                        onClick={() => {
+                          sendGameItem(s.type);
+                          setSkillDrawerOpen(false);
+                        }}
+                        type="button"
+                      >
+                        <span aria-hidden className="text-2xl leading-none">
+                          {s.icon}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-black text-sf-text text-sm">
+                            {s.label}
+                          </span>
+                          <span className="mt-0.5 block font-semibold text-[0.65rem] text-sf-muted leading-snug">
+                            {s.hint}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </>
         )}
 
         {playing && game?.grid && game.givens && (
-          <>
-            {frozen && (
-              <div className="sf-banner-frozen">
-                <span className="text-xl" aria-hidden>
-                  ❄️
+          <footer className="relative z-30 w-full shrink-0 border-sf-divider border-t bg-sf-footer px-3 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_28px_rgba(0,0,0,0.12)] backdrop-blur-2xl">
+            <button
+              className="flex w-full items-center justify-between gap-3 rounded-2xl border border-sf-magic/25 bg-gradient-to-r from-sf-magic/12 to-sf-accent/10 px-3 py-2.5 text-left active:brightness-110"
+              onClick={() => setSkillDrawerOpen(true)}
+              type="button"
+            >
+              <div className="min-w-0">
+                <p className="font-black text-[0.55rem] text-sf-muted uppercase tracking-wider">
+                  干扰技能
+                </p>
+                <p className="truncate font-bold text-sf-text text-sm">
+                  {cooldownLeftSec > 0
+                    ? `冷却中 ${cooldownLeftSec}s`
+                    : silenced
+                      ? "禁言中 · 无法施放"
+                      : canUseItem
+                        ? "点按打开技能库"
+                        : "本局次数已用尽"}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-0.5">
+                <span className="rounded-full border border-sf-gold/35 bg-sf-gold/10 px-2 py-0.5 font-black text-[0.65rem] text-sf-gold">
+                  {skillsRemaining}/{game.itemMax}
                 </span>
-                <p className="text-sm font-bold">冰冻中！暂时无法填数</p>
-              </div>
-            )}
-            {silenced && (
-              <div className="sf-banner-silence">
-                <span className="text-xl" aria-hidden>
-                  🤐
+                <span aria-hidden className="font-black text-lg text-sf-muted">
+                  ⌄
                 </span>
-                <p className="text-sm font-bold">禁言中！本段时间无法使用干扰技能</p>
               </div>
-            )}
-
-            <div className="sf-glass flex flex-col gap-2 rounded-3xl p-3 sm:p-4">
-              <div className="flex gap-2">
-                <div className="sf-glow-ring flex flex-1 flex-col rounded-2xl border border-sf-divider bg-sf-inset px-3 py-2">
-                  <span className="text-[0.55rem] font-black uppercase tracking-[0.2em] text-sf-muted">对局时间</span>
-                  <span className="font-mono text-2xl font-black tabular-nums text-sf-accent sf-text-glow">
-                    {formatClock(elapsedMs)}
-                  </span>
-                </div>
-                <div className="flex flex-1 flex-col justify-center rounded-2xl border border-sf-divider bg-sf-inset px-3 py-2">
-                  <span className="text-[0.55rem] font-black uppercase tracking-[0.2em] text-sf-muted">对手</span>
-                  <span className="truncate text-sm font-black text-sf-text">{game.rivalName}</span>
-                  <span className="text-[0.65rem] font-bold text-sf-magic">{game.rivalFilled} 格</span>
-                </div>
-                <div className="flex w-[4.25rem] flex-col items-center justify-center rounded-2xl border border-sf-gold/30 bg-sf-inset py-1">
-                  <span className="text-[0.5rem] font-black text-sf-muted">技能</span>
-                  <span className="text-2xl font-black text-sf-gold">{skillsRemaining}</span>
-                </div>
-              </div>
-              {game.puzzleId && (
-                <p className="text-center text-[0.6rem] font-bold text-sf-muted">
-                  关卡 <span className="font-mono text-sf-text">{game.puzzleId}</span>
-                  {game.puzzleDifficulty && (
-                    <>
-                      {" "}
-                      · 难度{" "}
-                      <span className="text-sf-gold">{DIFFICULTY_LABEL[game.puzzleDifficulty]}</span>
-                    </>
-                  )}{" "}
-                  · 已填 <span className="text-sf-accent">{selfFilled}</span>/81
-                </p>
-              )}
-              <p className="text-center text-[0.6rem] leading-relaxed text-sf-muted">
-                点可选格子弹出数字板；点空白外区域关闭。重复数字标红，终局须与标解一致。
-              </p>
-              <div
-                ref={boardWrapRef}
-                className="relative mx-auto w-full max-w-[min(100%,24rem)] touch-none"
-              >
-                <SudokuBoardPixi
-                  grid={game.grid}
-                  givens={game.givens}
-                  blindRows={blindRows}
-                  blindCols={blindCols}
-                  blindBoxes={blindBoxes}
-                  conflicts={conflictSet}
-                  selected={selectedCell}
-                  lockedCell={lockedCellVisual}
-                  readOnly={false}
-                  interactive={!frozen}
-                  colorScheme={boardScheme}
-                  onSelectCell={onSelectCell}
-                />
-                {selectedCell && !frozen && !isSelectedCellLocked && (
-                  <div
-                    role="dialog"
-                    aria-label="填入数字"
-                    className="pointer-events-auto absolute z-20 w-[7.6rem] max-w-[calc(100%-8px)] rounded-2xl border border-sf-accent/40 bg-sf-popover p-2 shadow-lg backdrop-blur-md sm:w-[8.5rem]"
-                    style={{
-                      left: `clamp(${POPOVER_HALF_REM}rem, ${popoverCenterXPct}%, calc(100% - ${POPOVER_HALF_REM}rem))`,
-                      top: `${((selectedCell.row + 0.5) / 9) * 100}%`,
-                      transform: popoverPlacementBelow
-                        ? "translate(-50%, 10px)"
-                        : "translate(-50%, calc(-100% - 10px))",
-                    }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                  >
-                    <div className="mb-1 text-center text-[0.55rem] font-bold text-sf-muted">
-                      填入
-                    </div>
-                    <div className="grid grid-cols-3 justify-items-center gap-1">
-                      {([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          className={popoverDigitBtn}
-                          onClick={() => applyDigit(n as Digit)}
-                        >
-                          {n}
-                        </button>
-                      ))}
-                      <button
-                        type="button"
-                        className={popoverClearBtn}
-                        onClick={() => applyDigit(0 as Digit)}
-                      >
-                        清除
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
+            </button>
+          </footer>
         )}
-
-        {done && game?.grid && game.givens && (
-          <>
-            <section className="sf-glass relative overflow-hidden rounded-3xl p-5 text-center">
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-sf-gold/10 to-transparent" />
-              <p className="relative mb-1 text-[0.65rem] font-black uppercase tracking-[0.25em] text-sf-gold">
-                本局结果
-              </p>
-              <p className="relative text-2xl font-black text-sf-text sm:text-3xl">
-                {game.winnerId === game.you.id ? (
-                  <span className="bg-gradient-to-r from-sf-gold via-amber-200 to-sf-gold bg-clip-text text-transparent">
-                    胜利
-                  </span>
-                ) : (
-                  <span className="text-sf-muted">败北</span>
-                )}
-              </p>
-              <p className="relative mt-1 text-sm font-bold text-sf-muted">
-                {game.winnerId === game.you.id ? "干得漂亮！" : `胜者：${game.winnerName ?? "对手"}`}
-              </p>
-              {resultMs !== null && (
-                <p className="relative mt-3 font-mono text-lg font-black text-sf-accent">
-                  {formatClock(resultMs)}
-                </p>
-              )}
-              {game.puzzleId && (
-                <p className="relative mt-1 text-[0.65rem] text-sf-muted">
-                  关卡 <span className="font-mono text-sf-text">{game.puzzleId}</span>
-                  {game.puzzleDifficulty && (
-                    <>
-                      {" "}
-                      · {DIFFICULTY_LABEL[game.puzzleDifficulty]}
-                    </>
-                  )}
-                </p>
-              )}
-              <div className="relative mt-4">
-                <SudokuBoardPixi
-                  grid={game.grid}
-                  givens={game.givens}
-                  blindRows={Array.from({ length: 9 }, () => false)}
-                  blindCols={Array.from({ length: 9 }, () => false)}
-                  blindBoxes={Array.from({ length: 9 }, () => false)}
-                  conflicts={conflictSet}
-                  selected={null}
-                  lockedCell={null}
-                  readOnly
-                  interactive={false}
-                  colorScheme={boardScheme}
-                  onSelectCell={noopSelectCell}
-                />
-              </div>
-            </section>
-            <section className="sf-glass rounded-3xl p-4">
-              <p className="mb-3 text-center text-[0.65rem] font-bold text-sf-muted">
-                双方各点一次「再战」返回大厅
-              </p>
-              <button type="button" className={ctaPrimary} onClick={requestRematch} disabled={!socket}>
-                {rematchMine ? "已就绪 · 等对手" : "再战一局"}
-              </button>
-              {rematchPartner && !rematchMine && (
-                <p className="mt-2 text-center text-xs font-bold text-sf-accent">对手已确认</p>
-              )}
-            </section>
-          </>
-        )}
-
-        {roomId && !playing && !done && game?.phase === "lobby" && roster.length === 2 && (
-          <p className="text-center text-[0.65rem] font-bold text-sf-muted">双方准备后立即开局</p>
-        )}
-      </main>
-
-      {/* 技能抽屉：对局中从底部展开，新技能只改 SKILL_ROWS 即可 */}
-      {playing && game?.grid && game.givens && skillDrawerOpen && (
-        <>
-          <button
-            type="button"
-            className="fixed inset-0 z-40 bg-sf-overlay backdrop-blur-[2px]"
-            aria-label="关闭技能面板"
-            onClick={() => setSkillDrawerOpen(false)}
-          />
-          <div
-            className="fixed inset-x-0 bottom-0 z-50 flex max-h-[min(72vh,28rem)] flex-col rounded-t-3xl border border-sf-divider border-b-0 bg-sf-drawer shadow-[0_-12px_40px_rgba(0,0,0,0.18)] backdrop-blur-xl pb-[max(0.75rem,env(safe-area-inset-bottom))]"
-            role="dialog"
-            aria-label="干扰技能"
-          >
-            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-sf-divider px-4 py-3">
-              <div>
-                <p className="text-[0.6rem] font-black uppercase tracking-wider text-sf-muted">干扰技能</p>
-                <p className="text-xs font-bold text-sf-text">
-                  剩余 <span className="text-sf-gold">{skillsRemaining}</span>/{game.itemMax}
-                  {silenced && <span className="ml-2 text-amber-300">· 禁言中</span>}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="rounded-full border border-sf-divider bg-sf-chip px-3 py-1.5 text-xs font-bold text-sf-muted active:opacity-80"
-                onClick={() => setSkillDrawerOpen(false)}
-              >
-                收起
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-              {cooldownLeftSec > 0 && (
-                <div className="mb-3">
-                  <div className="mb-1 flex items-center justify-between text-[0.65rem] font-bold text-sf-warn-text">
-                    <span>技能冷却</span>
-                    <span>{cooldownLeftSec}s</span>
-                  </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-sf-muted/25">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-sf-accent to-cyan-300 transition-[width] duration-200"
-                      style={{ width: `${Math.min(100, cooldownProgress * 100)}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              <p className="mb-2 text-[0.55rem] font-bold uppercase tracking-wider text-sf-muted/90">技能列表</p>
-              <ul className="flex flex-col gap-2">
-                {SKILL_ROWS.map((s) => (
-                  <li key={s.type}>
-                    <button
-                      type="button"
-                      className={skillDrawerRowBtn}
-                      disabled={!canCastSkill}
-                      onClick={() => {
-                        useItem(s.type);
-                        setSkillDrawerOpen(false);
-                      }}
-                    >
-                      <span className="text-2xl leading-none" aria-hidden>
-                        {s.icon}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-black text-sf-text">{s.label}</span>
-                        <span className="mt-0.5 block text-[0.65rem] font-semibold leading-snug text-sf-muted">
-                          {s.hint}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </>
-      )}
-
-      {playing && game?.grid && game.givens && (
-        <footer className="relative z-30 w-full shrink-0 border-t border-sf-divider bg-sf-footer px-3 pt-2.5 shadow-[0_-8px_28px_rgba(0,0,0,0.12)] backdrop-blur-2xl pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          <button
-            type="button"
-            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-sf-magic/25 bg-gradient-to-r from-sf-magic/12 to-sf-accent/10 px-3 py-2.5 text-left active:brightness-110"
-            onClick={() => setSkillDrawerOpen(true)}
-          >
-            <div className="min-w-0">
-              <p className="text-[0.55rem] font-black uppercase tracking-wider text-sf-muted">干扰技能</p>
-              <p className="truncate text-sm font-bold text-sf-text">
-                {cooldownLeftSec > 0
-                  ? `冷却中 ${cooldownLeftSec}s`
-                  : silenced
-                    ? "禁言中 · 无法施放"
-                    : canUseItem
-                      ? "点按打开技能库"
-                      : "本局次数已用尽"}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-col items-end gap-0.5">
-              <span className="rounded-full border border-sf-gold/35 bg-sf-gold/10 px-2 py-0.5 text-[0.65rem] font-black text-sf-gold">
-                {skillsRemaining}/{game.itemMax}
-              </span>
-              <span className="text-lg font-black text-sf-muted" aria-hidden>
-                ⌄
-              </span>
-            </div>
-          </button>
-        </footer>
-      )}
       </div>
     </>
   );

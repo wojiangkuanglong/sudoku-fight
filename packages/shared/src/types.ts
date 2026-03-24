@@ -15,22 +15,22 @@ export type ItemType =
   | "bomb_digit";
 
 export interface PuzzlePack {
-  id: string;
-  givens: Grid9;
-  solution: Grid9;
   difficulty: Difficulty;
+  givens: Grid9;
+  id: string;
+  solution: Grid9;
 }
 
 export interface MoveRecord {
-  row: number;
-  col: number;
-  before: Digit;
   after: Digit;
+  before: Digit;
+  col: number;
+  row: number;
 }
 
 /** 客户端展示用常量（与服务端配置保持一致） */
 export const ROW_BLIND_MS = 30_000;
-export const FREEZE_MS = 8_000;
+export const FREEZE_MS = 8000;
 export const SILENCE_MS = 15_000;
 export const CELL_LOCK_MS = 12_000;
 export const COOLDOWN_SPIKE_MS = 12_000;

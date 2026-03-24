@@ -1,6 +1,5 @@
-export * from "./types.js";
-export * from "./sudoku.js";
 export { PUZZLES } from "./puzzles.js";
+export * from "./sudoku.js";
 export {
   countSolutionsUpTo,
   digPuzzleFromSolution,
@@ -8,3 +7,4 @@ export {
   generateSolvedGrid,
   randomDifficulty,
 } from "./sudoku-generator.js";
+export * from "./types.js";

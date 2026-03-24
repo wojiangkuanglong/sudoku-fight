@@ -7,22 +7,24 @@
     "dev": "vite --host",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "lint": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "clean": "turbo run clean && rimraf node_modules .turbo dist"
   },
   "dependencies": {
     "@sudoku-fight/shared": "workspace:*",
     "pixi.js": "^8.17.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "socket.io-client": "^4.8.1"
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "socket.io-client": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
-    "@types/react": "^19.0.2",
-    "@types/react-dom": "^19.0.2",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "rimraf": "catalog:",
     "tailwindcss": "^4.2.2",
-    "typescript": "^5.7.3",
-    "vite": "^6.0.7"
+    "typescript": "catalog:",
+    "vite": "^8.0.2"
   }
 }

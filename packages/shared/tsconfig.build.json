@@ -5,7 +5,8 @@
     "rootDir": "src",
     "declaration": true,
     "noEmit": false,
-    "composite": true
+    "composite": true,
+    "strictNullChecks": true
   },
   "include": ["src/**/*.ts"]
 }

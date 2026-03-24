@@ -1,10 +1,10 @@
+import type { Grid9 } from "@sudoku-fight/shared";
 import { Application, Container } from "pixi.js";
 import { useEffect, useRef } from "react";
-import type { Grid9 } from "@sudoku-fight/shared";
 import {
   attachBoardInteraction,
-  renderSudokuBoardPixi,
   type BoardColorScheme,
+  renderSudokuBoardPixi,
   type SudokuBoardVisualState,
 } from "./renderSudokuBoardPixi.js";
 
@@ -39,7 +39,9 @@ export function SudokuBoardPixi(props: Props) {
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
+    if (!host) {
+      return;
+    }
     let alive = true;
     let ro: ResizeObserver | null = null;
 
@@ -47,7 +49,9 @@ export function SudokuBoardPixi(props: Props) {
       const app = appRef.current;
       const board = boardRef.current;
       const hostEl = hostRef.current;
-      if (!app || !board || !hostEl) return;
+      if (!(app && board && hostEl)) {
+        return;
+      }
       const w = Math.max(200, Math.floor(hostEl.clientWidth));
       sizeRef.current = w;
       app.renderer.resize(w, w);
@@ -80,6 +84,8 @@ export function SudokuBoardPixi(props: Props) {
         antialias: true,
         resolution: Math.min(window.devicePixelRatio ?? 1, 2),
         autoDensity: true,
+        /** WebGPU + HMR / StrictMode 下易出现 batch 与几何体空引用；WebGL 更稳 */
+        preference: "webgl",
       });
       if (!alive) {
         app.destroy(true);
@@ -104,7 +110,10 @@ export function SudokuBoardPixi(props: Props) {
       const a = appRef.current;
       appRef.current = null;
       boardRef.current = null;
-      a?.destroy(true, { children: true, texture: true });
+      if (a) {
+        a.stop();
+        a.destroy(true, { children: true, texture: true, context: true });
+      }
       host.replaceChildren();
     };
   }, []);
@@ -127,10 +136,10 @@ export function SudokuBoardPixi(props: Props) {
   ]);
 
   return (
-    <div
-      ref={hostRef}
-      className="mx-auto aspect-square w-full max-w-[min(100%,24rem)] touch-none select-none overflow-hidden rounded-lg bg-sf-pixi-canvas shadow-inner ring-1 ring-sf-divider"
+    <section
       aria-label="数独棋盘"
+      className="mx-auto aspect-square w-full max-w-[min(100%,24rem)] touch-none select-none overflow-hidden rounded-lg bg-sf-pixi-canvas shadow-inner ring-1 ring-sf-divider"
+      ref={hostRef}
     />
   );
 }

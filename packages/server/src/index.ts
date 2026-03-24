@@ -1,5 +1,5 @@
-import express from "express";
 import { createServer } from "node:http";
+import express from "express";
 import { Server } from "socket.io";
 import { registerSocket } from "./socket.js";
 
