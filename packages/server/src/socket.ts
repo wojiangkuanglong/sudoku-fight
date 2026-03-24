@@ -17,10 +17,7 @@ const ITEM_TYPES: ItemType[] = [
 ];
 
 function randomRoomId(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let s = "";
-  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)]!;
-  return s;
+  return String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");
 }
 
 function broadcastGameState(io: Server, room: Room): void {

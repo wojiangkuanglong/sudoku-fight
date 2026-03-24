@@ -60,6 +60,9 @@ const DIFFICULTY_LABEL: Record<Difficulty, string> = {
 
 const DIFFICULTY_OPTIONS: Difficulty[] = ["easy", "medium", "hard"];
 
+type ThemeChoice = "dark" | "light";
+const THEME_STORAGE_KEY = "sf-theme";
+
 function noopSelectCell(_row: number, _col: number) {}
 
 /** 手游风计时：始终 mm:ss */
@@ -72,10 +75,10 @@ function formatClock(ms: number): string {
 }
 
 const popoverDigitBtn =
-  "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-gradient-to-b from-zinc-600 to-zinc-900 text-sm font-black text-white shadow-md active:scale-95 sm:h-9 sm:w-9 sm:text-base";
+  "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-sf-divider bg-gradient-to-b from-sf-elevated to-sf-bg text-sm font-black text-sf-text shadow-md active:scale-95 sm:h-9 sm:w-9 sm:text-base";
 
 const popoverClearBtn =
-  "col-span-3 mt-0.5 flex h-7 items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-900/50 text-[0.65rem] font-bold text-emerald-200 active:brightness-110 sm:h-8 sm:text-xs";
+  "col-span-3 w-full min-w-0 justify-self-stretch mt-0.5 flex h-7 items-center justify-center rounded-lg border border-sf-accent/40 bg-sf-accent/12 px-2 text-[0.65rem] font-bold text-sf-accent active:brightness-110 sm:h-8 sm:text-xs";
 
 /** 浮层约 sm:w-[8.5rem]，clamp 用半宽避免左右裁切 */
 const POPOVER_HALF_REM = 4.25;
@@ -97,13 +100,13 @@ const SKILL_ROWS: { type: ItemType; icon: string; label: string; hint: string }[
 ];
 
 const skillDrawerRowBtn =
-  "flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-b from-violet-600/35 to-indigo-950/70 px-3 py-2.5 text-left shadow-sm active:scale-[0.99] disabled:pointer-events-none disabled:opacity-35";
+  "flex w-full items-center gap-3 rounded-2xl border border-sf-divider bg-sf-inset px-3 py-2.5 text-left shadow-sm active:scale-[0.99] disabled:pointer-events-none disabled:opacity-35";
 
 const ctaPrimary =
   "flex min-h-14 w-full items-center justify-center rounded-2xl border border-teal-400/40 bg-gradient-to-r from-teal-400 via-cyan-500 to-teal-500 text-base font-black tracking-wide text-slate-950 shadow-[0_0_24px_rgba(45,212,191,0.35)] transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40";
 
 const ctaSecondary =
-  "flex min-h-12 w-full items-center justify-center rounded-2xl border border-white/15 bg-white/5 text-sm font-bold text-white backdrop-blur-sm transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40";
+  "flex min-h-12 w-full items-center justify-center rounded-2xl border border-sf-divider bg-sf-chip text-sm font-bold text-sf-text backdrop-blur-sm transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40";
 
 export default function App() {
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -118,6 +121,23 @@ export default function App() {
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const [skillDrawerOpen, setSkillDrawerOpen] = useState(false);
   const boardWrapRef = useRef<HTMLDivElement>(null);
+
+  const [theme, setTheme] = useState<ThemeChoice>(() => {
+    try {
+      return localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+    } catch {
+      return "dark";
+    }
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
 
   useEffect(() => {
     const s = io(SERVER, { transports: ["websocket"] });
@@ -208,7 +228,12 @@ export default function App() {
   };
   const joinRoom = () => {
     setError(null);
-    socket?.emit("lobby:join", { roomId: roomIdInput.trim(), name });
+    const code = roomIdInput.replace(/\D/g, "").slice(0, 6);
+    if (code.length !== 6) {
+      setError("请输入 6 位数字房间码");
+      return;
+    }
+    socket?.emit("lobby:join", { roomId: code, name });
   };
   const toggleReady = () => {
     setError(null);
@@ -348,52 +373,72 @@ export default function App() {
     if (!playing) setSkillDrawerOpen(false);
   }, [playing]);
 
+  const boardScheme = theme === "light" ? "light" : "dark";
+
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {/* 顶栏：品牌 + 在线状态 */}
-      <header className="mb-2 flex shrink-0 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div className="sf-glow-ring flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sf-accent to-teal-600 text-lg font-black text-slate-950 shadow-lg">
-            9
+    <>
+      <div className="sf-page-deco" aria-hidden>
+        <div className="sf-page-deco__grid" />
+        <div className="sf-page-deco__orb sf-page-deco__orb--a" />
+        <div className="sf-page-deco__orb sf-page-deco__orb--b" />
+        <div className="sf-page-deco__badge" />
+      </div>
+      <div className="sf-app-shell flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* 顶栏：品牌 + 主题 + 在线状态 */}
+        <header className="mb-2 flex shrink-0 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="sf-glow-ring flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sf-accent to-teal-600 text-lg font-black text-slate-950 shadow-lg">
+              9
+            </div>
+            <div className="min-w-0">
+              <h1 className="truncate text-[1.15rem] font-black tracking-tight text-sf-text sm:text-xl">
+                数独对决
+              </h1>
+              <p className="text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-sf-muted">
+                Battle
+              </p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <h1 className="truncate text-[1.15rem] font-black tracking-tight text-white sm:text-xl">
-              数独对决
-            </h1>
-            <p className="text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-sf-muted">
-              Battle
-            </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              className="flex h-9 w-9 items-center justify-center rounded-xl border border-sf-divider bg-sf-inset text-base shadow-sm transition active:scale-95"
+              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+              title={theme === "dark" ? "切换浅色模式" : "切换深色模式"}
+              aria-label={theme === "dark" ? "切换浅色模式" : "切换深色模式"}
+            >
+              {theme === "dark" ? "☀️" : "🌙"}
+            </button>
+            <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-sf-divider bg-sf-inset px-2.5 py-1.5 backdrop-blur-md">
+              <span
+                className={`h-2 w-2 rounded-full ${socket ? "bg-emerald-400 shadow-[0_0_10px_#34d399]" : "bg-sf-muted"}`}
+              />
+              <span className="text-[0.65rem] font-bold text-sf-muted">{socket ? "在线" : "连接中"}</span>
+            </div>
           </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-white/10 bg-black/40 px-2.5 py-1.5 backdrop-blur-md">
-          <span
-            className={`h-2 w-2 rounded-full ${socket ? "bg-emerald-400 shadow-[0_0_10px_#34d399]" : "bg-zinc-600"}`}
-          />
-          <span className="text-[0.65rem] font-bold text-sf-muted">{socket ? "在线" : "连接中"}</span>
-        </div>
-      </header>
+        </header>
 
-      {error && (
-        <div
-          className="fixed left-1/2 top-[max(5.5rem,env(safe-area-inset-top)+3.5rem)] z-60 max-w-[min(92vw,22rem)] -translate-x-1/2 rounded-xl border-2 border-sf-danger/60 bg-slate-950/95 px-4 py-2.5 text-center text-xs font-bold text-sf-danger shadow-[0_0_24px_rgba(251,113,133,0.25)] backdrop-blur-md"
-          role="status"
-        >
-          {error}
-        </div>
-      )}
+        {error && (
+          <div
+            className="sf-error-toast fixed left-1/2 top-[max(5.5rem,env(safe-area-inset-top)+3.5rem)] z-60 max-w-[min(92vw,22rem)] -translate-x-1/2 px-4 py-2.5"
+            role="status"
+          >
+            {error}
+          </div>
+        )}
 
-      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-2">
+        <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-2">
         {/* 登录 / 开房 */}
         {!roomId && (
           <section className="sf-glass sf-glow-ring relative overflow-hidden rounded-3xl p-5">
             <div className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-sf-magic/20 blur-3xl" />
             <div className="pointer-events-none absolute -bottom-10 -left-10 h-36 w-36 rounded-full bg-sf-accent/10 blur-3xl" />
             <p className="mb-1 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-sf-accent">对战大厅</p>
-            <h2 className="mb-4 text-2xl font-black text-white">开始匹配</h2>
+            <h2 className="mb-4 text-2xl font-black text-sf-text">开始匹配</h2>
             <label className="mb-4 block text-xs font-bold text-sf-muted">
               玩家昵称
               <input
-                className="mt-1.5 min-h-12 w-full rounded-2xl border border-white/10 bg-black/40 px-4 text-base font-semibold text-white outline-none ring-sf-accent/30 placeholder:text-zinc-600 focus:ring-2"
+                className="mt-1.5 min-h-12 w-full rounded-2xl border border-sf-divider bg-sf-inset px-4 text-base font-semibold text-sf-text outline-none ring-sf-accent/30 placeholder:text-sf-placeholder focus:ring-2"
                 type="text"
                 placeholder="输入昵称"
                 value={name}
@@ -406,11 +451,14 @@ export default function App() {
               </button>
               <div className="flex gap-2">
                 <input
-                  className="min-h-12 min-w-0 flex-1 rounded-2xl border border-white/10 bg-black/40 px-3 text-center font-mono text-base font-bold tracking-widest text-white outline-none ring-sf-magic/30 focus:ring-2"
+                  className="min-h-12 min-w-0 flex-1 rounded-2xl border border-sf-divider bg-sf-inset px-3 text-center font-mono text-base font-bold tracking-[0.2em] text-sf-text outline-none ring-sf-magic/30 focus:ring-2"
                   type="text"
-                  placeholder="房间码"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={6}
+                  placeholder="6 位数字"
                   value={roomIdInput}
-                  onChange={(e) => setRoomIdInput(e.target.value.toUpperCase())}
+                  onChange={(e) => setRoomIdInput(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 />
                 <button
                   type="button"
@@ -431,12 +479,12 @@ export default function App() {
               <div>
                 <p className="text-[0.6rem] font-bold uppercase tracking-widest text-sf-muted">房间码</p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-2xl font-black tracking-[0.35em] text-sf-accent sf-text-glow">
+                  <span className="font-mono text-2xl font-black tracking-[0.2em] text-sf-accent sf-text-glow">
                     {roomId}
                   </span>
                   <button
                     type="button"
-                    className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[0.65rem] font-bold text-sf-muted active:bg-white/10"
+                    className="rounded-full border border-sf-divider bg-sf-chip px-3 py-1 text-[0.65rem] font-bold text-sf-muted active:opacity-80"
                     onClick={() => void copyRoomId()}
                   >
                     {copyHint ? "已复制" : "复制"}
@@ -446,7 +494,7 @@ export default function App() {
               {game && (
                 <div className="text-right">
                   <p className="text-[0.6rem] font-bold text-sf-muted">当前身份</p>
-                  <p className="max-w-[9rem] truncate text-sm font-black text-white">{game.you.name}</p>
+                  <p className="max-w-[9rem] truncate text-sm font-black text-sf-text">{game.you.name}</p>
                 </div>
               )}
             </div>
@@ -464,7 +512,7 @@ export default function App() {
                     className={`min-h-11 flex-1 rounded-xl border px-1 py-2 text-xs font-black transition sm:text-sm ${
                       game && game.lobbyDifficulty === d
                         ? "border-sf-accent/60 bg-sf-accent/20 text-sf-accent"
-                        : "border-white/10 bg-black/40 text-sf-muted disabled:opacity-40"
+                        : "border-sf-divider bg-sf-inset text-sf-muted disabled:opacity-40"
                     }`}
                     onClick={() => {
                       setError(null);
@@ -491,12 +539,12 @@ export default function App() {
                     return (
                       <div
                         key={p?.id ?? `slot-${i}`}
-                        className="flex flex-col items-center rounded-2xl border border-white/10 bg-black/35 p-3"
+                        className="flex flex-col items-center rounded-2xl border border-sf-divider bg-sf-inset p-3"
                       >
-                        <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-sf-accent/25 to-sf-magic/20 text-2xl font-black text-white ring-2 ring-white/10">
+                        <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-sf-accent/25 to-sf-magic/20 text-2xl font-black text-sf-text ring-2 ring-sf-divider">
                           {p ? p.name.slice(0, 1) : "?"}
                         </div>
-                        <p className="w-full truncate text-center text-sm font-bold text-white">
+                        <p className="w-full truncate text-center text-sm font-bold text-sf-text">
                           {p?.name ?? "等待加入…"}
                         </p>
                         <p
@@ -519,36 +567,36 @@ export default function App() {
         {playing && game?.grid && game.givens && (
           <>
             {frozen && (
-              <div className="flex items-center justify-center gap-2 rounded-2xl border border-cyan-400/40 bg-gradient-to-r from-cyan-500/15 to-blue-600/15 px-3 py-3 text-center">
+              <div className="sf-banner-frozen">
                 <span className="text-xl" aria-hidden>
                   ❄️
                 </span>
-                <p className="text-sm font-bold text-cyan-100">冰冻中！暂时无法填数</p>
+                <p className="text-sm font-bold">冰冻中！暂时无法填数</p>
               </div>
             )}
             {silenced && (
-              <div className="flex items-center justify-center gap-2 rounded-2xl border border-amber-500/35 bg-gradient-to-r from-amber-600/15 to-orange-900/20 px-3 py-3 text-center">
+              <div className="sf-banner-silence">
                 <span className="text-xl" aria-hidden>
                   🤐
                 </span>
-                <p className="text-sm font-bold text-amber-100">禁言中！本段时间无法使用干扰技能</p>
+                <p className="text-sm font-bold">禁言中！本段时间无法使用干扰技能</p>
               </div>
             )}
 
             <div className="sf-glass flex flex-col gap-2 rounded-3xl p-3 sm:p-4">
               <div className="flex gap-2">
-                <div className="sf-glow-ring flex flex-1 flex-col rounded-2xl border border-white/10 bg-black/40 px-3 py-2">
+                <div className="sf-glow-ring flex flex-1 flex-col rounded-2xl border border-sf-divider bg-sf-inset px-3 py-2">
                   <span className="text-[0.55rem] font-black uppercase tracking-[0.2em] text-sf-muted">对局时间</span>
                   <span className="font-mono text-2xl font-black tabular-nums text-sf-accent sf-text-glow">
                     {formatClock(elapsedMs)}
                   </span>
                 </div>
-                <div className="flex flex-1 flex-col justify-center rounded-2xl border border-white/10 bg-black/40 px-3 py-2">
+                <div className="flex flex-1 flex-col justify-center rounded-2xl border border-sf-divider bg-sf-inset px-3 py-2">
                   <span className="text-[0.55rem] font-black uppercase tracking-[0.2em] text-sf-muted">对手</span>
-                  <span className="truncate text-sm font-black text-white">{game.rivalName}</span>
+                  <span className="truncate text-sm font-black text-sf-text">{game.rivalName}</span>
                   <span className="text-[0.65rem] font-bold text-sf-magic">{game.rivalFilled} 格</span>
                 </div>
-                <div className="flex w-[4.25rem] flex-col items-center justify-center rounded-2xl border border-sf-gold/30 bg-black/40 py-1">
+                <div className="flex w-[4.25rem] flex-col items-center justify-center rounded-2xl border border-sf-gold/30 bg-sf-inset py-1">
                   <span className="text-[0.5rem] font-black text-sf-muted">技能</span>
                   <span className="text-2xl font-black text-sf-gold">{skillsRemaining}</span>
                 </div>
@@ -584,13 +632,14 @@ export default function App() {
                   lockedCell={lockedCellVisual}
                   readOnly={false}
                   interactive={!frozen}
+                  colorScheme={boardScheme}
                   onSelectCell={onSelectCell}
                 />
                 {selectedCell && !frozen && !isSelectedCellLocked && (
                   <div
                     role="dialog"
                     aria-label="填入数字"
-                    className="pointer-events-auto absolute z-20 w-[7.6rem] max-w-[calc(100%-8px)] rounded-2xl border border-sf-accent/40 bg-[#0c0b14]/95 p-2 shadow-[0_8px_32px_rgba(0,0,0,0.55),0_0_0_1px_rgba(46,230,214,0.15)] backdrop-blur-md sm:w-[8.5rem]"
+                    className="pointer-events-auto absolute z-20 w-[7.6rem] max-w-[calc(100%-8px)] rounded-2xl border border-sf-accent/40 bg-sf-popover p-2 shadow-lg backdrop-blur-md sm:w-[8.5rem]"
                     style={{
                       left: `clamp(${POPOVER_HALF_REM}rem, ${popoverCenterXPct}%, calc(100% - ${POPOVER_HALF_REM}rem))`,
                       top: `${((selectedCell.row + 0.5) / 9) * 100}%`,
@@ -636,7 +685,7 @@ export default function App() {
               <p className="relative mb-1 text-[0.65rem] font-black uppercase tracking-[0.25em] text-sf-gold">
                 本局结果
               </p>
-              <p className="relative text-2xl font-black text-white sm:text-3xl">
+              <p className="relative text-2xl font-black text-sf-text sm:text-3xl">
                 {game.winnerId === game.you.id ? (
                   <span className="bg-gradient-to-r from-sf-gold via-amber-200 to-sf-gold bg-clip-text text-transparent">
                     胜利
@@ -676,6 +725,7 @@ export default function App() {
                   lockedCell={null}
                   readOnly
                   interactive={false}
+                  colorScheme={boardScheme}
                   onSelectCell={noopSelectCell}
                 />
               </div>
@@ -704,26 +754,26 @@ export default function App() {
         <>
           <button
             type="button"
-            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px]"
+            className="fixed inset-0 z-40 bg-sf-overlay backdrop-blur-[2px]"
             aria-label="关闭技能面板"
             onClick={() => setSkillDrawerOpen(false)}
           />
           <div
-            className="fixed inset-x-0 bottom-0 z-50 flex max-h-[min(72vh,28rem)] flex-col rounded-t-3xl border border-white/10 border-b-0 bg-[#0a0912]/98 shadow-[0_-12px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+            className="fixed inset-x-0 bottom-0 z-50 flex max-h-[min(72vh,28rem)] flex-col rounded-t-3xl border border-sf-divider border-b-0 bg-sf-drawer shadow-[0_-12px_40px_rgba(0,0,0,0.18)] backdrop-blur-xl pb-[max(0.75rem,env(safe-area-inset-bottom))]"
             role="dialog"
             aria-label="干扰技能"
           >
-            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-sf-divider px-4 py-3">
               <div>
                 <p className="text-[0.6rem] font-black uppercase tracking-wider text-sf-muted">干扰技能</p>
-                <p className="text-xs font-bold text-white">
+                <p className="text-xs font-bold text-sf-text">
                   剩余 <span className="text-sf-gold">{skillsRemaining}</span>/{game.itemMax}
                   {silenced && <span className="ml-2 text-amber-300">· 禁言中</span>}
                 </p>
               </div>
               <button
                 type="button"
-                className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-bold text-sf-muted active:bg-white/10"
+                className="rounded-full border border-sf-divider bg-sf-chip px-3 py-1.5 text-xs font-bold text-sf-muted active:opacity-80"
                 onClick={() => setSkillDrawerOpen(false)}
               >
                 收起
@@ -736,7 +786,7 @@ export default function App() {
                     <span>技能冷却</span>
                     <span>{cooldownLeftSec}s</span>
                   </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/50">
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-sf-muted/25">
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-sf-accent to-cyan-300 transition-[width] duration-200"
                       style={{ width: `${Math.min(100, cooldownProgress * 100)}%` }}
@@ -761,7 +811,7 @@ export default function App() {
                         {s.icon}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-black text-white">{s.label}</span>
+                        <span className="block text-sm font-black text-sf-text">{s.label}</span>
                         <span className="mt-0.5 block text-[0.65rem] font-semibold leading-snug text-sf-muted">
                           {s.hint}
                         </span>
@@ -776,15 +826,15 @@ export default function App() {
       )}
 
       {playing && game?.grid && game.givens && (
-        <footer className="relative z-30 w-full shrink-0 border-t border-white/10 bg-[#05040a]/95 px-3 pt-2.5 shadow-[0_-8px_32px_rgba(0,0,0,0.35)] backdrop-blur-2xl pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <footer className="relative z-30 w-full shrink-0 border-t border-sf-divider bg-sf-footer px-3 pt-2.5 shadow-[0_-8px_28px_rgba(0,0,0,0.12)] backdrop-blur-2xl pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             type="button"
-            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-violet-500/25 bg-gradient-to-r from-violet-900/40 to-indigo-950/60 px-3 py-2.5 text-left active:brightness-110"
+            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-sf-magic/25 bg-gradient-to-r from-sf-magic/12 to-sf-accent/10 px-3 py-2.5 text-left active:brightness-110"
             onClick={() => setSkillDrawerOpen(true)}
           >
             <div className="min-w-0">
               <p className="text-[0.55rem] font-black uppercase tracking-wider text-sf-muted">干扰技能</p>
-              <p className="truncate text-sm font-bold text-white">
+              <p className="truncate text-sm font-bold text-sf-text">
                 {cooldownLeftSec > 0
                   ? `冷却中 ${cooldownLeftSec}s`
                   : silenced
@@ -805,6 +855,7 @@ export default function App() {
           </button>
         </footer>
       )}
-    </div>
+      </div>
+    </>
   );
 }

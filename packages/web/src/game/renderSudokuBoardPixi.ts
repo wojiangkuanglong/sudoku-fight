@@ -18,16 +18,34 @@ export type SudokuBoardVisualState = {
   readOnly: boolean;
 };
 
-const COL_CELL = 0x1a1730;
-const COL_CELL_CONFLICT = 0x4a1d35;
-const COL_CELL_SELECTED = 0x1a3d48;
-const COL_GIVEN = 0xc4b5fd;
-const COL_USER = 0xf4f4ff;
-const COL_LINE = 0x3d3a55;
-const COL_LINE_THICK = 0x5b5678;
-const COL_ACCENT = 0x2ee6d6;
-/** 与棋盘 Application background 一致，遮盖层不透明以彻底盖住数字 */
-const COL_BLIND = 0x06050a;
+export type BoardColorScheme = "dark" | "light";
+
+const PALETTE = {
+  dark: {
+    cell: 0x1a1730,
+    conflict: 0x4a1d35,
+    selected: 0x1a3d48,
+    given: 0xc4b5fd,
+    user: 0xf4f4ff,
+    conflictText: 0xfecdd3,
+    line: 0x3d3a55,
+    lineThick: 0x5b5678,
+    accent: 0x2ee6d6,
+    blind: 0x06050a,
+  },
+  light: {
+    cell: 0xf1f5f9,
+    conflict: 0xffe4e6,
+    selected: 0xccfbf1,
+    given: 0x4338ca,
+    user: 0x0f172a,
+    conflictText: 0xbe123c,
+    line: 0xcbd5e1,
+    lineThick: 0x94a3b8,
+    accent: 0x0d9488,
+    blind: 0xe2e8f0,
+  },
+} as const;
 
 function cellIsBlinded(
   row: number,
@@ -42,7 +60,9 @@ export function renderSudokuBoardPixi(
   root: Container,
   state: SudokuBoardVisualState,
   sizePx: number,
+  scheme: BoardColorScheme = "dark",
 ): void {
+  const C = PALETTE[scheme];
   root.removeChildren();
   const cell = sizePx / 9;
   const fontSize = Math.max(14, cell * 0.42);
@@ -51,19 +71,19 @@ export function renderSudokuBoardPixi(
     fontFamily: 'system-ui, "PingFang SC", "Microsoft YaHei", sans-serif',
     fontSize,
     fontWeight: "700",
-    fill: COL_GIVEN,
+    fill: C.given,
   });
   const styleUser = new TextStyle({
     fontFamily: 'system-ui, "PingFang SC", "Microsoft YaHei", sans-serif',
     fontSize,
     fontWeight: "600",
-    fill: COL_USER,
+    fill: C.user,
   });
   const styleConflict = new TextStyle({
     fontFamily: 'system-ui, "PingFang SC", "Microsoft YaHei", sans-serif',
     fontSize,
     fontWeight: "600",
-    fill: 0xfecdd3,
+    fill: C.conflictText,
   });
 
   for (let row = 0; row < 9; row++) {
@@ -78,17 +98,17 @@ export function renderSudokuBoardPixi(
       const blinded = cellIsBlinded(row, col, state);
 
       const g = new Graphics();
-      let fill = COL_CELL;
-      if (conflict) fill = COL_CELL_CONFLICT;
-      if (sel) fill = COL_CELL_SELECTED;
+      let fill: number = C.cell;
+      if (conflict) fill = C.conflict;
+      if (sel) fill = C.selected;
       g.rect(x, y, cell, cell).fill({ color: fill });
 
       const thin = 1;
       const thick = 2.5;
       const tr = col === 2 || col === 5 ? thick : thin;
       const tb = row === 2 || row === 5 ? thick : thin;
-      g.moveTo(x + cell, y).lineTo(x + cell, y + cell).stroke({ width: tr, color: col === 8 ? COL_LINE_THICK : COL_LINE });
-      g.moveTo(x, y + cell).lineTo(x + cell, y + cell).stroke({ width: tb, color: row === 8 ? COL_LINE_THICK : COL_LINE });
+      g.moveTo(x + cell, y).lineTo(x + cell, y + cell).stroke({ width: tr, color: col === 8 ? C.lineThick : C.line });
+      g.moveTo(x, y + cell).lineTo(x + cell, y + cell).stroke({ width: tb, color: row === 8 ? C.lineThick : C.line });
 
       root.addChild(g);
 
@@ -106,7 +126,7 @@ export function renderSudokuBoardPixi(
   const border = new Graphics();
   border
     .rect(0, 0, sizePx, sizePx)
-    .stroke({ width: 2.5, color: COL_LINE_THICK });
+    .stroke({ width: 2.5, color: C.lineThick });
   root.addChildAt(border, 0);
 
   const blindLayer = new Graphics();
@@ -114,7 +134,7 @@ export function renderSudokuBoardPixi(
     for (let col = 0; col < 9; col++) {
       const box = Math.floor(row / 3) * 3 + Math.floor(col / 3);
       if (!state.blindRows[row] && !state.blindCols[col] && !state.blindBoxes[box]) continue;
-      blindLayer.rect(col * cell, row * cell, cell, cell).fill({ color: COL_BLIND, alpha: 1 });
+      blindLayer.rect(col * cell, row * cell, cell, cell).fill({ color: C.blind, alpha: 1 });
     }
   }
   root.addChild(blindLayer);
@@ -124,7 +144,7 @@ export function renderSudokuBoardPixi(
     const x = col * cell;
     const y = row * cell;
     const ring = new Graphics();
-    ring.rect(x + 1, y + 1, cell - 2, cell - 2).stroke({ width: 2.5, color: COL_ACCENT });
+    ring.rect(x + 1, y + 1, cell - 2, cell - 2).stroke({ width: 2.5, color: C.accent });
     root.addChild(ring);
   }
 

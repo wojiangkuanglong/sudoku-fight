@@ -4,6 +4,7 @@ import type { Grid9 } from "@sudoku-fight/shared";
 import {
   attachBoardInteraction,
   renderSudokuBoardPixi,
+  type BoardColorScheme,
   type SudokuBoardVisualState,
 } from "./renderSudokuBoardPixi.js";
 
@@ -18,6 +19,8 @@ type Props = {
   lockedCell: { row: number; col: number } | null;
   readOnly: boolean;
   interactive: boolean;
+  /** 与页面 data-theme 一致，用于 Pixi 配色 */
+  colorScheme: BoardColorScheme;
   onSelectCell: (row: number, col: number) => void;
 };
 
@@ -60,7 +63,7 @@ export function SudokuBoardPixi(props: Props) {
         lockedCell: p.lockedCell,
         readOnly: p.readOnly || !p.interactive,
       };
-      renderSudokuBoardPixi(board, state, w);
+      renderSudokuBoardPixi(board, state, w, p.colorScheme);
       detachRef.current?.();
       detachRef.current = attachBoardInteraction(board, w, {
         readOnly: p.readOnly || !p.interactive,
@@ -73,7 +76,7 @@ export function SudokuBoardPixi(props: Props) {
     void (async () => {
       const app = new Application();
       await app.init({
-        background: 0x06050a,
+        backgroundAlpha: 0,
         antialias: true,
         resolution: Math.min(window.devicePixelRatio ?? 1, 2),
         autoDensity: true,
@@ -120,12 +123,13 @@ export function SudokuBoardPixi(props: Props) {
     props.readOnly,
     props.interactive,
     props.onSelectCell,
+    props.colorScheme,
   ]);
 
   return (
     <div
       ref={hostRef}
-      className="mx-auto aspect-square w-full max-w-[min(100%,24rem)] touch-none select-none"
+      className="mx-auto aspect-square w-full max-w-[min(100%,24rem)] touch-none select-none overflow-hidden rounded-lg bg-sf-pixi-canvas shadow-inner ring-1 ring-sf-divider"
       aria-label="数独棋盘"
     />
   );
