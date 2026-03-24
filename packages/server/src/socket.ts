@@ -1,11 +1,20 @@
-import type { ItemType } from "@sudoku-fight/shared";
+import type { Difficulty, ItemType } from "@sudoku-fight/shared";
 import type { Server } from "socket.io";
 import { buildPersonalState, publicLobbyPlayers, Room } from "./room.js";
 
 const rooms = new Map<string, Room>();
 const socketRoom = new Map<string, string>();
 
-const ITEM_TYPES: ItemType[] = ["row_blind", "undo_three", "freeze"];
+const ITEM_TYPES: ItemType[] = [
+  "area_blind",
+  "undo_three",
+  "freeze",
+  "eraser_one",
+  "silence",
+  "lock_cell",
+  "cooldown_hurt",
+  "bomb_digit",
+];
 
 function randomRoomId(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -93,6 +102,25 @@ export function registerSocket(io: Server): void {
       broadcastGameState(io, room);
     });
 
+    socket.on("lobby:difficulty", (payload: { difficulty?: string }) => {
+      const roomId = socketRoom.get(socket.id);
+      if (!roomId) return;
+      const room = rooms.get(roomId);
+      if (!room) return;
+      const raw = String(payload?.difficulty ?? "").toLowerCase();
+      if (raw !== "easy" && raw !== "medium" && raw !== "hard") {
+        socket.emit("app:error", { message: "难度无效" });
+        return;
+      }
+      const res = room.setLobbyDifficulty(socket.id, raw as Difficulty);
+      if (!res.ok) {
+        socket.emit("app:error", { message: res.reason });
+        return;
+      }
+      io.to(roomId).emit("lobby:roster", { players: publicLobbyPlayers(room) });
+      broadcastGameState(io, room);
+    });
+
     socket.on("lobby:ready", (payload: { ready?: boolean }) => {
       const roomId = socketRoom.get(socket.id);
       if (!roomId) return;
@@ -143,13 +171,6 @@ export function registerSocket(io: Server): void {
         return;
       }
       const row = payload?.row !== undefined ? Number(payload.row) : undefined;
-      if (
-        t === "row_blind" &&
-        (row === undefined || Number.isNaN(row) || row < 0 || row > 8)
-      ) {
-        socket.emit("app:error", { message: "遮行需要指定行号 0-8" });
-        return;
-      }
       const now = Date.now();
       const res = room.applyItem(socket.id, t, row, now);
       if (!res.ok) {

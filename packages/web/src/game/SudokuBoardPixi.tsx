@@ -11,8 +11,11 @@ type Props = {
   grid: Grid9;
   givens: Grid9;
   blindRows: boolean[];
+  blindCols: boolean[];
+  blindBoxes: boolean[];
   conflicts: Set<string>;
   selected: { row: number; col: number } | null;
+  lockedCell: { row: number; col: number } | null;
   readOnly: boolean;
   interactive: boolean;
   onSelectCell: (row: number, col: number) => void;
@@ -50,8 +53,11 @@ export function SudokuBoardPixi(props: Props) {
         grid: p.grid,
         givens: p.givens,
         blindRows: p.blindRows,
+        blindCols: p.blindCols,
+        blindBoxes: p.blindBoxes,
         conflicts: p.conflicts,
         selected: p.selected,
+        lockedCell: p.lockedCell,
         readOnly: p.readOnly || !p.interactive,
       };
       renderSudokuBoardPixi(board, state, w);
@@ -106,8 +112,11 @@ export function SudokuBoardPixi(props: Props) {
     props.grid,
     props.givens,
     props.blindRows,
+    props.blindCols,
+    props.blindBoxes,
     props.conflicts,
     props.selected,
+    props.lockedCell,
     props.readOnly,
     props.interactive,
     props.onSelectCell,

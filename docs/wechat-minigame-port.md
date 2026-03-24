@@ -16,7 +16,7 @@
 
 ## 建议迁移步骤
 
-1. 保留服务端协议：`lobby:*`、`game:state`、`game:cell`、`game:item` 等事件名与字段不变。
+1. 保留服务端协议：`lobby:*`（含 `lobby:difficulty` 选难度）、`game:state`、`game:cell`、`game:item` 等事件名与字段不变。
 2. 将 `SudokuBoardVisualState` + `renderSudokuBoardPixi` 的绘制逻辑迁到小游戏的 `Game` 场景里（每帧或状态变更时 `removeChildren` + 重绘，与现 H5 一致）。
 3. 触摸命中：复用 `boardCellFromPointer` 的数学（`localX/localY` → `row/col`），数据源改为触摸事件的本地坐标。
 4. 大厅、房间号、按钮等：用小游戏 UI 系统重做；**不要**依赖 Tailwind 运行时。

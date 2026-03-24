@@ -1,10 +1,14 @@
 import {
-  PUZZLES,
+  CELL_LOCK_MS,
   cloneGrid,
+  COOLDOWN_SPIKE_MS,
   filledCount,
+  generatePuzzlePack,
   isGiven,
   isSolved,
   isValidDigit,
+  SILENCE_MS,
+  type Difficulty,
   type Digit,
   type Grid9,
   type ItemType,
@@ -25,8 +29,16 @@ export interface PlayerState {
   ready: boolean;
   freezeUntil: number;
   rowBlindUntil: number[];
+  colBlindUntil: number[];
+  boxBlindUntil: number[];
   itemUses: number;
   itemReadyAt: number;
+  /** 无法使用技能的截止时间 */
+  silenceUntil: number;
+  /** 被锁定的格子，-1 表示无 */
+  cellLockRow: number;
+  cellLockCol: number;
+  cellLockUntil: number;
 }
 
 export class Room {
@@ -41,6 +53,8 @@ export class Room {
   /** 结束后点击「再来一局」的玩家 socketId */
   readonly rematchAck = new Set<string>();
   readonly players = new Map<string, PlayerState>();
+  /** 下一局开局用题难度（仅大厅可改） */
+  lobbyDifficulty: Difficulty = "medium";
 
   constructor(id: string) {
     this.id = id;
@@ -56,8 +70,14 @@ export class Room {
       ready: false,
       freezeUntil: 0,
       rowBlindUntil: Array.from({ length: 9 }, () => 0),
+      colBlindUntil: Array.from({ length: 9 }, () => 0),
+      boxBlindUntil: Array.from({ length: 9 }, () => 0),
       itemUses: 0,
       itemReadyAt: 0,
+      silenceUntil: 0,
+      cellLockRow: -1,
+      cellLockCol: -1,
+      cellLockUntil: 0,
     });
     return { ok: true };
   }
@@ -74,12 +94,26 @@ export class Room {
     return { ok: true };
   }
 
+  setLobbyDifficulty(
+    socketId: string,
+    difficulty: Difficulty,
+  ): { ok: true } | { ok: false; reason: string } {
+    if (!this.players.has(socketId)) return { ok: false, reason: "不在房间内" };
+    if (this.phase !== "lobby") return { ok: false, reason: "对局进行中无法更改难度" };
+    if (difficulty !== "easy" && difficulty !== "medium" && difficulty !== "hard") {
+      return { ok: false, reason: "难度无效" };
+    }
+    this.lobbyDifficulty = difficulty;
+    for (const p of this.players.values()) p.ready = false;
+    return { ok: true };
+  }
+
   tryStart(now: number): { started: boolean } {
     if (this.phase !== "lobby" || this.players.size !== 2) return { started: false };
     for (const p of this.players.values()) {
       if (!p.ready) return { started: false };
     }
-    const pick = PUZZLES[Math.floor(Math.random() * PUZZLES.length)]!;
+    const pick = generatePuzzlePack(this.lobbyDifficulty);
     this.puzzle = pick;
     this.phase = "playing";
     this.winnerId = null;
@@ -91,8 +125,14 @@ export class Room {
       p.history = [];
       p.freezeUntil = 0;
       p.rowBlindUntil = Array.from({ length: 9 }, () => 0);
+      p.colBlindUntil = Array.from({ length: 9 }, () => 0);
+      p.boxBlindUntil = Array.from({ length: 9 }, () => 0);
       p.itemUses = 0;
       p.itemReadyAt = now;
+      p.silenceUntil = 0;
+      p.cellLockRow = -1;
+      p.cellLockCol = -1;
+      p.cellLockUntil = 0;
     }
     return { started: true };
   }
@@ -115,6 +155,13 @@ export class Room {
     const me = this.players.get(socketId);
     if (!me) return { ok: false, reason: "不在房间内" };
     if (now < me.freezeUntil) return { ok: false, reason: "你被冻结，暂时无法填数" };
+    if (
+      me.cellLockRow === row &&
+      me.cellLockCol === col &&
+      now < me.cellLockUntil
+    ) {
+      return { ok: false, reason: "该格被锁定，稍后再改" };
+    }
     if (row < 0 || row > 8 || col < 0 || col > 8) return { ok: false, reason: "坐标无效" };
     if (!isValidDigit(value)) return { ok: false, reason: "数字无效" };
     const g = this.puzzle.givens;
@@ -144,12 +191,21 @@ export class Room {
     if (!me || !victimId) return { ok: false, reason: "对手不存在" };
     if (me.itemUses >= ITEM_MAX_PER_GAME) return { ok: false, reason: "本局道具次数已用尽" };
     if (now < me.itemReadyAt) return { ok: false, reason: "道具冷却中" };
+    if (now < me.silenceUntil) return { ok: false, reason: "沉默中，无法使用技能" };
 
     const victim = this.players.get(victimId)!;
+    const g = this.puzzle.givens;
 
-    if (type === "row_blind") {
-      if (row === undefined || row < 0 || row > 8) return { ok: false, reason: "请指定有效行 0-8" };
-      victim.rowBlindUntil[row] = Math.max(victim.rowBlindUntil[row]!, now + ROW_BLIND_MS);
+    if (type === "area_blind") {
+      const kind = Math.floor(Math.random() * 3);
+      const idx = Math.floor(Math.random() * 9);
+      if (kind === 0) {
+        victim.rowBlindUntil[idx] = Math.max(victim.rowBlindUntil[idx]!, now + ROW_BLIND_MS);
+      } else if (kind === 1) {
+        victim.colBlindUntil[idx] = Math.max(victim.colBlindUntil[idx]!, now + ROW_BLIND_MS);
+      } else {
+        victim.boxBlindUntil[idx] = Math.max(victim.boxBlindUntil[idx]!, now + ROW_BLIND_MS);
+      }
     } else if (type === "undo_three") {
       let n = 0;
       while (n < 3 && victim.history.length > 0) {
@@ -159,6 +215,43 @@ export class Room {
       }
     } else if (type === "freeze") {
       victim.freezeUntil = Math.max(victim.freezeUntil, now + FREEZE_MS);
+    } else if (type === "eraser_one") {
+      if (victim.history.length === 0) return { ok: false, reason: "对手没有可擦除的手写" };
+      const rec = victim.history.pop()!;
+      victim.grid[rec.row]![rec.col] = rec.before;
+    } else if (type === "silence") {
+      victim.silenceUntil = Math.max(victim.silenceUntil, now + SILENCE_MS);
+    } else if (type === "lock_cell") {
+      const candidates: [number, number][] = [];
+      for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+          if (isGiven(g, r, c)) continue;
+          if (victim.grid[r]![c]! === 0) continue;
+          candidates.push([r, c]);
+        }
+      }
+      if (candidates.length === 0) return { ok: false, reason: "对手没有可锁的手写格" };
+      const pick = candidates[Math.floor(Math.random() * candidates.length)]!;
+      victim.cellLockRow = pick[0];
+      victim.cellLockCol = pick[1];
+      victim.cellLockUntil = now + CELL_LOCK_MS;
+    } else if (type === "cooldown_hurt") {
+      victim.itemReadyAt = Math.max(victim.itemReadyAt, now + COOLDOWN_SPIKE_MS);
+    } else if (type === "bomb_digit") {
+      const bombCandidates: [number, number][] = [];
+      for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+          if (isGiven(g, r, c)) continue;
+          if (victim.grid[r]![c]! === 0) continue;
+          bombCandidates.push([r, c]);
+        }
+      }
+      if (bombCandidates.length === 0) return { ok: false, reason: "对手没有可炸掉的手写数字" };
+      const bombPick = bombCandidates[Math.floor(Math.random() * bombCandidates.length)]!;
+      const br = bombPick[0];
+      const bc = bombPick[1];
+      victim.grid[br]![bc] = 0 as Digit;
+      victim.history = victim.history.filter((rec) => rec.row !== br || rec.col !== bc);
     } else {
       return { ok: false, reason: "未知道具" };
     }
@@ -171,8 +264,16 @@ export class Room {
   pruneEffects(now: number): void {
     for (const p of this.players.values()) {
       if (now >= p.freezeUntil) p.freezeUntil = 0;
+      if (now >= p.silenceUntil) p.silenceUntil = 0;
+      if (p.cellLockRow >= 0 && now >= p.cellLockUntil) {
+        p.cellLockRow = -1;
+        p.cellLockCol = -1;
+        p.cellLockUntil = 0;
+      }
       for (let r = 0; r < 9; r++) {
         if (now >= p.rowBlindUntil[r]!) p.rowBlindUntil[r] = 0;
+        if (now >= p.colBlindUntil[r]!) p.colBlindUntil[r] = 0;
+        if (now >= p.boxBlindUntil[r]!) p.boxBlindUntil[r] = 0;
       }
     }
   }
@@ -191,8 +292,14 @@ export class Room {
       p.ready = false;
       p.freezeUntil = 0;
       p.rowBlindUntil = Array.from({ length: 9 }, () => 0);
+      p.colBlindUntil = Array.from({ length: 9 }, () => 0);
+      p.boxBlindUntil = Array.from({ length: 9 }, () => 0);
       p.itemUses = 0;
       p.itemReadyAt = 0;
+      p.silenceUntil = 0;
+      p.cellLockRow = -1;
+      p.cellLockCol = -1;
+      p.cellLockUntil = 0;
     }
   }
 
@@ -233,6 +340,8 @@ export function buildPersonalState(room: Room, myId: string, now: number) {
       grid: null as Grid9 | null,
       frozenUntil: 0,
       rowBlindUntil: [] as number[],
+      colBlindUntil: [] as number[],
+      boxBlindUntil: [] as number[],
       rivalName: opp?.name ?? "等待对手",
       rivalFilled: opp ? filledCount(opp.grid) : 0,
       winnerId: room.winnerId,
@@ -244,7 +353,14 @@ export function buildPersonalState(room: Room, myId: string, now: number) {
       gameStartedAt: room.gameStartedAt,
       finishedAt: room.finishedAt,
       puzzleId: null as string | null,
+      puzzleDifficulty: null as Difficulty | null,
+      silenceUntil: me?.silenceUntil ?? 0,
+      cellLocked:
+        me && me.cellLockRow >= 0 && now < me.cellLockUntil
+          ? { row: me.cellLockRow, col: me.cellLockCol, until: me.cellLockUntil }
+          : null,
       rematchVotes: [...room.rematchAck],
+      lobbyDifficulty: room.lobbyDifficulty,
     };
   }
 
@@ -256,6 +372,8 @@ export function buildPersonalState(room: Room, myId: string, now: number) {
     grid: me.grid,
     frozenUntil: me.freezeUntil,
     rowBlindUntil: [...me.rowBlindUntil],
+    colBlindUntil: [...me.colBlindUntil],
+    boxBlindUntil: [...me.boxBlindUntil],
     rivalName: opp?.name ?? "对手",
     rivalFilled: opp ? filledCount(opp.grid) : 0,
     winnerId: room.winnerId,
@@ -267,6 +385,13 @@ export function buildPersonalState(room: Room, myId: string, now: number) {
     gameStartedAt: room.gameStartedAt,
     finishedAt: room.finishedAt,
     puzzleId: room.puzzle.id,
+    puzzleDifficulty: room.puzzle.difficulty,
+    silenceUntil: me.silenceUntil,
+    cellLocked:
+      me.cellLockRow >= 0 && now < me.cellLockUntil
+        ? { row: me.cellLockRow, col: me.cellLockCol, until: me.cellLockUntil }
+        : null,
     rematchVotes: [...room.rematchAck],
+    lobbyDifficulty: room.lobbyDifficulty,
   };
 }

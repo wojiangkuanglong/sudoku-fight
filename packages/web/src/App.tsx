@@ -3,8 +3,10 @@ import { io, type Socket } from "socket.io-client";
 import {
   allConflictKeys,
   filledCount,
+  type Difficulty,
   type Digit,
   type Grid9,
+  type ItemType,
 } from "@sudoku-fight/shared";
 import { SudokuBoardPixi } from "./game/SudokuBoardPixi.js";
 
@@ -29,6 +31,8 @@ interface GameStatePayload {
   grid: Grid9 | null;
   frozenUntil: number;
   rowBlindUntil: number[];
+  colBlindUntil: number[];
+  boxBlindUntil: number[];
   rivalName: string;
   rivalFilled: number;
   winnerId: string | null;
@@ -40,8 +44,21 @@ interface GameStatePayload {
   gameStartedAt: number | null;
   finishedAt: number | null;
   puzzleId: string | null;
+  puzzleDifficulty: Difficulty | null;
+  silenceUntil: number;
+  cellLocked: { row: number; col: number; until: number } | null;
   rematchVotes: string[];
+  /** 下一局将使用的难度（大厅内可选，对局/结算中仅展示） */
+  lobbyDifficulty: Difficulty;
 }
+
+const DIFFICULTY_LABEL: Record<Difficulty, string> = {
+  easy: "简单",
+  medium: "中等",
+  hard: "困难",
+};
+
+const DIFFICULTY_OPTIONS: Difficulty[] = ["easy", "medium", "hard"];
 
 function noopSelectCell(_row: number, _col: number) {}
 
@@ -60,8 +77,27 @@ const popoverDigitBtn =
 const popoverClearBtn =
   "col-span-3 mt-0.5 flex h-7 items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-900/50 text-[0.65rem] font-bold text-emerald-200 active:brightness-110 sm:h-8 sm:text-xs";
 
-const skillBtn =
-  "flex min-h-[3.25rem] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl border border-white/10 bg-gradient-to-b from-violet-600/50 to-indigo-950/80 px-1 py-2 text-[0.65rem] font-bold leading-tight text-white shadow-md active:scale-[0.98] disabled:pointer-events-none disabled:opacity-35 sm:text-xs";
+/** 浮层约 sm:w-[8.5rem]，clamp 用半宽避免左右裁切 */
+const POPOVER_HALF_REM = 4.25;
+
+const SKILL_ROWS: { type: ItemType; icon: string; label: string; hint: string }[] = [
+  {
+    type: "area_blind",
+    icon: "🌫️",
+    label: "随机遮盖",
+    hint: "随机遮挡对手一整行、一整列或一个宫格片刻",
+  },
+  { type: "undo_three", icon: "↩️", label: "三连擦", hint: "撤销对手最近三步" },
+  { type: "freeze", icon: "❄️", label: "冰冻", hint: "对手短时间无法填数" },
+  { type: "eraser_one", icon: "🧽", label: "单擦", hint: "撤销对手最近一步" },
+  { type: "silence", icon: "🤐", label: "禁言", hint: "对手暂时无法施放技能" },
+  { type: "lock_cell", icon: "🔒", label: "锁格", hint: "暂时锁住对手一格" },
+  { type: "cooldown_hurt", icon: "⏳", label: "扰乱", hint: "拉长对手技能冷却" },
+  { type: "bomb_digit", icon: "💣", label: "炸弹", hint: "随机清空对手一格手写数字" },
+];
+
+const skillDrawerRowBtn =
+  "flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-b from-violet-600/35 to-indigo-950/70 px-3 py-2.5 text-left shadow-sm active:scale-[0.99] disabled:pointer-events-none disabled:opacity-35";
 
 const ctaPrimary =
   "flex min-h-14 w-full items-center justify-center rounded-2xl border border-teal-400/40 bg-gradient-to-r from-teal-400 via-cyan-500 to-teal-500 text-base font-black tracking-wide text-slate-950 shadow-[0_0_24px_rgba(45,212,191,0.35)] transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40";
@@ -78,9 +114,9 @@ export default function App() {
   const [game, setGame] = useState<GameStatePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-  const [blindRow, setBlindRow] = useState(0);
   const [copyHint, setCopyHint] = useState(false);
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
+  const [skillDrawerOpen, setSkillDrawerOpen] = useState(false);
   const boardWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -101,6 +137,7 @@ export default function App() {
     s.on("game:started", () => {
       setError(null);
       setSelectedCell(null);
+      setSkillDrawerOpen(false);
     });
     s.on("game:state", (st: GameStatePayload) => {
       setGame(st);
@@ -139,8 +176,26 @@ export default function App() {
   const selfReady = roster.find((p) => p.id === myId)?.ready ?? false;
 
   const frozen = Boolean(game && game.frozenUntil > now);
+  const silenced = Boolean(game && game.silenceUntil > now);
   const blindRows =
-    game?.rowBlindUntil.map((until) => until > now) ?? Array.from({ length: 9 }, () => false);
+    game?.rowBlindUntil?.map((until) => until > now) ?? Array.from({ length: 9 }, () => false);
+  const blindCols =
+    game?.colBlindUntil?.map((until) => until > now) ?? Array.from({ length: 9 }, () => false);
+  const blindBoxes =
+    game?.boxBlindUntil?.map((until) => until > now) ?? Array.from({ length: 9 }, () => false);
+
+  const lockedCellVisual =
+    game?.cellLocked && now < game.cellLocked.until
+      ? { row: game.cellLocked.row, col: game.cellLocked.col }
+      : null;
+
+  const isSelectedCellLocked = Boolean(
+    selectedCell &&
+      game?.cellLocked &&
+      now < game.cellLocked.until &&
+      selectedCell.row === game.cellLocked.row &&
+      selectedCell.col === game.cellLocked.col,
+  );
 
   const conflictSet = useMemo(() => {
     if (!game?.grid) return new Set<string>();
@@ -176,15 +231,31 @@ export default function App() {
       if (!game?.givens) return;
       if (game.givens[row]![col]! !== 0) return;
       if (frozen) return;
+      if (
+        game.cellLocked &&
+        now < game.cellLocked.until &&
+        game.cellLocked.row === row &&
+        game.cellLocked.col === col
+      ) {
+        return;
+      }
       setSelectedCell({ row, col });
     },
-    [game?.givens, frozen],
+    [game?.givens, game?.cellLocked, frozen, now],
   );
 
   const applyDigit = useCallback(
     (value: Digit) => {
       if (!selectedCell || !socket || !game?.givens) return;
       if (game.givens[selectedCell.row]![selectedCell.col]! !== 0) return;
+      if (
+        game.cellLocked &&
+        now < game.cellLocked.until &&
+        selectedCell.row === game.cellLocked.row &&
+        selectedCell.col === game.cellLocked.col
+      ) {
+        return;
+      }
       socket.emit("game:cell", {
         row: selectedCell.row,
         col: selectedCell.col,
@@ -192,7 +263,7 @@ export default function App() {
       });
       setSelectedCell(null);
     },
-    [selectedCell, socket, game?.givens],
+    [selectedCell, socket, game?.givens, game?.cellLocked, now],
   );
 
   const canUseItem =
@@ -200,6 +271,8 @@ export default function App() {
     game.phase === "playing" &&
     game.itemUses < game.itemMax &&
     now >= game.itemReadyAt;
+
+  const canCastSkill = Boolean(canUseItem && !silenced);
 
   const cooldownLeftSec =
     game && now < game.itemReadyAt ? Math.ceil((game.itemReadyAt - now) / 1000) : 0;
@@ -210,7 +283,7 @@ export default function App() {
       : 0;
 
   const useItem = useCallback(
-    (type: "row_blind" | "undo_three" | "freeze", row?: number) => {
+    (type: ItemType, row?: number) => {
       setError(null);
       socket?.emit("game:item", { type, row });
     },
@@ -241,6 +314,18 @@ export default function App() {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [playing, selectedCell, frozen]);
 
+  useEffect(() => {
+    if (!selectedCell || !game?.cellLocked) return;
+    const t = Date.now();
+    if (
+      t < game.cellLocked.until &&
+      selectedCell.row === game.cellLocked.row &&
+      selectedCell.col === game.cellLocked.col
+    ) {
+      setSelectedCell(null);
+    }
+  }, [selectedCell, game?.cellLocked, tick]);
+
   const elapsedMs =
     playing && game?.gameStartedAt ? now - game.gameStartedAt : 0;
   const resultMs =
@@ -256,6 +341,12 @@ export default function App() {
   const skillsRemaining = game ? Math.max(0, game.itemMax - game.itemUses) : 0;
 
   const popoverPlacementBelow = selectedCell !== null && selectedCell.row < 2;
+  const popoverCenterXPct =
+    selectedCell !== null ? ((selectedCell.col + 0.5) / 9) * 100 : 0;
+
+  useEffect(() => {
+    if (!playing) setSkillDrawerOpen(false);
+  }, [playing]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -334,7 +425,7 @@ export default function App() {
           </section>
         )}
 
-        {roomId && (
+        {roomId && (game === null || game.phase === "lobby") && (
           <section className="sf-glass rounded-3xl p-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
@@ -358,6 +449,35 @@ export default function App() {
                   <p className="max-w-[9rem] truncate text-sm font-black text-white">{game.you.name}</p>
                 </div>
               )}
+            </div>
+
+            <div className="mt-4">
+              <p className="mb-1.5 text-center text-[0.65rem] font-bold uppercase tracking-widest text-sf-muted">
+                本局难度
+              </p>
+              <div className="flex gap-2">
+                {DIFFICULTY_OPTIONS.map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    disabled={!socket || !game}
+                    className={`min-h-11 flex-1 rounded-xl border px-1 py-2 text-xs font-black transition sm:text-sm ${
+                      game && game.lobbyDifficulty === d
+                        ? "border-sf-accent/60 bg-sf-accent/20 text-sf-accent"
+                        : "border-white/10 bg-black/40 text-sf-muted disabled:opacity-40"
+                    }`}
+                    onClick={() => {
+                      setError(null);
+                      socket?.emit("lobby:difficulty", { difficulty: d });
+                    }}
+                  >
+                    {DIFFICULTY_LABEL[d]}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-center text-[0.6rem] leading-relaxed text-sf-muted">
+                开战前任选；切换难度会取消双方准备
+              </p>
             </div>
 
             {inLobby && (
@@ -406,6 +526,14 @@ export default function App() {
                 <p className="text-sm font-bold text-cyan-100">冰冻中！暂时无法填数</p>
               </div>
             )}
+            {silenced && (
+              <div className="flex items-center justify-center gap-2 rounded-2xl border border-amber-500/35 bg-gradient-to-r from-amber-600/15 to-orange-900/20 px-3 py-3 text-center">
+                <span className="text-xl" aria-hidden>
+                  🤐
+                </span>
+                <p className="text-sm font-bold text-amber-100">禁言中！本段时间无法使用干扰技能</p>
+              </div>
+            )}
 
             <div className="sf-glass flex flex-col gap-2 rounded-3xl p-3 sm:p-4">
               <div className="flex gap-2">
@@ -427,8 +555,15 @@ export default function App() {
               </div>
               {game.puzzleId && (
                 <p className="text-center text-[0.6rem] font-bold text-sf-muted">
-                  关卡 <span className="font-mono text-sf-text">{game.puzzleId}</span> · 已填{" "}
-                  <span className="text-sf-accent">{selfFilled}</span>/81
+                  关卡 <span className="font-mono text-sf-text">{game.puzzleId}</span>
+                  {game.puzzleDifficulty && (
+                    <>
+                      {" "}
+                      · 难度{" "}
+                      <span className="text-sf-gold">{DIFFICULTY_LABEL[game.puzzleDifficulty]}</span>
+                    </>
+                  )}{" "}
+                  · 已填 <span className="text-sf-accent">{selfFilled}</span>/81
                 </p>
               )}
               <p className="text-center text-[0.6rem] leading-relaxed text-sf-muted">
@@ -442,19 +577,22 @@ export default function App() {
                   grid={game.grid}
                   givens={game.givens}
                   blindRows={blindRows}
+                  blindCols={blindCols}
+                  blindBoxes={blindBoxes}
                   conflicts={conflictSet}
                   selected={selectedCell}
+                  lockedCell={lockedCellVisual}
                   readOnly={false}
                   interactive={!frozen}
                   onSelectCell={onSelectCell}
                 />
-                {selectedCell && !frozen && (
+                {selectedCell && !frozen && !isSelectedCellLocked && (
                   <div
                     role="dialog"
                     aria-label="填入数字"
-                    className="pointer-events-auto absolute z-20 w-[7.6rem] rounded-2xl border border-sf-accent/40 bg-[#0c0b14]/95 p-2 shadow-[0_8px_32px_rgba(0,0,0,0.55),0_0_0_1px_rgba(46,230,214,0.15)] backdrop-blur-md sm:w-[8.5rem]"
+                    className="pointer-events-auto absolute z-20 w-[7.6rem] max-w-[calc(100%-8px)] rounded-2xl border border-sf-accent/40 bg-[#0c0b14]/95 p-2 shadow-[0_8px_32px_rgba(0,0,0,0.55),0_0_0_1px_rgba(46,230,214,0.15)] backdrop-blur-md sm:w-[8.5rem]"
                     style={{
-                      left: `${((selectedCell.col + 0.5) / 9) * 100}%`,
+                      left: `clamp(${POPOVER_HALF_REM}rem, ${popoverCenterXPct}%, calc(100% - ${POPOVER_HALF_REM}rem))`,
                       top: `${((selectedCell.row + 0.5) / 9) * 100}%`,
                       transform: popoverPlacementBelow
                         ? "translate(-50%, 10px)"
@@ -518,6 +656,12 @@ export default function App() {
               {game.puzzleId && (
                 <p className="relative mt-1 text-[0.65rem] text-sf-muted">
                   关卡 <span className="font-mono text-sf-text">{game.puzzleId}</span>
+                  {game.puzzleDifficulty && (
+                    <>
+                      {" "}
+                      · {DIFFICULTY_LABEL[game.puzzleDifficulty]}
+                    </>
+                  )}
                 </p>
               )}
               <div className="relative mt-4">
@@ -525,8 +669,11 @@ export default function App() {
                   grid={game.grid}
                   givens={game.givens}
                   blindRows={Array.from({ length: 9 }, () => false)}
+                  blindCols={Array.from({ length: 9 }, () => false)}
+                  blindBoxes={Array.from({ length: 9 }, () => false)}
                   conflicts={conflictSet}
                   selected={null}
+                  lockedCell={null}
                   readOnly
                   interactive={false}
                   onSelectCell={noopSelectCell}
@@ -552,83 +699,110 @@ export default function App() {
         )}
       </main>
 
-      {/* 底部操控台：与棋盘同列 flex 排布，不再 fixed 遮挡 */}
-      {playing && game?.grid && game.givens && (
-        <footer className="w-full shrink-0 border-t border-white/10 bg-[#05040a]/95 px-3 pt-3 shadow-[0_-8px_32px_rgba(0,0,0,0.35)] backdrop-blur-2xl pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          <div className="mb-2">
-            <p className="mb-1 text-[0.55rem] font-bold uppercase tracking-wider text-sf-muted/90">遮行目标</p>
-            <div className="flex gap-1 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {Array.from({ length: 9 }, (_, r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setBlindRow(r)}
-                  className={`shrink-0 rounded-xl border px-2.5 py-1.5 text-xs font-black ${
-                    blindRow === r
-                      ? "border-sf-accent/60 bg-sf-accent/20 text-sf-accent"
-                      : "border-white/10 bg-black/40 text-sf-muted"
-                  }`}
-                >
-                  {r + 1}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="mb-2">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-[0.55rem] font-black uppercase tracking-wider text-sf-muted/90">干扰技能</span>
-              {cooldownLeftSec > 0 && (
-                <span className="text-[0.6rem] font-bold text-sf-warn-text">冷却 {cooldownLeftSec}s</span>
-              )}
-            </div>
-            {cooldownLeftSec > 0 && game && (
-              <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-black/50">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-sf-accent to-cyan-300 transition-[width] duration-200"
-                  style={{ width: `${Math.min(100, cooldownProgress * 100)}%` }}
-                />
+      {/* 技能抽屉：对局中从底部展开，新技能只改 SKILL_ROWS 即可 */}
+      {playing && game?.grid && game.givens && skillDrawerOpen && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px]"
+            aria-label="关闭技能面板"
+            onClick={() => setSkillDrawerOpen(false)}
+          />
+          <div
+            className="fixed inset-x-0 bottom-0 z-50 flex max-h-[min(72vh,28rem)] flex-col rounded-t-3xl border border-white/10 border-b-0 bg-[#0a0912]/98 shadow-[0_-12px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+            role="dialog"
+            aria-label="干扰技能"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
+              <div>
+                <p className="text-[0.6rem] font-black uppercase tracking-wider text-sf-muted">干扰技能</p>
+                <p className="text-xs font-bold text-white">
+                  剩余 <span className="text-sf-gold">{skillsRemaining}</span>/{game.itemMax}
+                  {silenced && <span className="ml-2 text-amber-300">· 禁言中</span>}
+                </p>
               </div>
-            )}
-            <div className="flex gap-2">
               <button
                 type="button"
-                className={skillBtn}
-                disabled={!canUseItem}
-                aria-label="遮行干扰"
-                onClick={() => useItem("row_blind", blindRow)}
+                className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-bold text-sf-muted active:bg-white/10"
+                onClick={() => setSkillDrawerOpen(false)}
               >
-                <span className="text-lg leading-none" aria-hidden>
-                  🌫️
-                </span>
-                遮行
-              </button>
-              <button
-                type="button"
-                className={skillBtn}
-                disabled={!canUseItem}
-                aria-label="撤销对手三步"
-                onClick={() => useItem("undo_three")}
-              >
-                <span className="text-lg leading-none" aria-hidden>
-                  ↩️
-                </span>
-                撤销
-              </button>
-              <button
-                type="button"
-                className={skillBtn}
-                disabled={!canUseItem}
-                aria-label="冰冻对手"
-                onClick={() => useItem("freeze")}
-              >
-                <span className="text-lg leading-none" aria-hidden>
-                  ❄️
-                </span>
-                冰冻
+                收起
               </button>
             </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+              {cooldownLeftSec > 0 && (
+                <div className="mb-3">
+                  <div className="mb-1 flex items-center justify-between text-[0.65rem] font-bold text-sf-warn-text">
+                    <span>技能冷却</span>
+                    <span>{cooldownLeftSec}s</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/50">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-sf-accent to-cyan-300 transition-[width] duration-200"
+                      style={{ width: `${Math.min(100, cooldownProgress * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              <p className="mb-2 text-[0.55rem] font-bold uppercase tracking-wider text-sf-muted/90">技能列表</p>
+              <ul className="flex flex-col gap-2">
+                {SKILL_ROWS.map((s) => (
+                  <li key={s.type}>
+                    <button
+                      type="button"
+                      className={skillDrawerRowBtn}
+                      disabled={!canCastSkill}
+                      onClick={() => {
+                        useItem(s.type);
+                        setSkillDrawerOpen(false);
+                      }}
+                    >
+                      <span className="text-2xl leading-none" aria-hidden>
+                        {s.icon}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-black text-white">{s.label}</span>
+                        <span className="mt-0.5 block text-[0.65rem] font-semibold leading-snug text-sf-muted">
+                          {s.hint}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
+        </>
+      )}
+
+      {playing && game?.grid && game.givens && (
+        <footer className="relative z-30 w-full shrink-0 border-t border-white/10 bg-[#05040a]/95 px-3 pt-2.5 shadow-[0_-8px_32px_rgba(0,0,0,0.35)] backdrop-blur-2xl pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-violet-500/25 bg-gradient-to-r from-violet-900/40 to-indigo-950/60 px-3 py-2.5 text-left active:brightness-110"
+            onClick={() => setSkillDrawerOpen(true)}
+          >
+            <div className="min-w-0">
+              <p className="text-[0.55rem] font-black uppercase tracking-wider text-sf-muted">干扰技能</p>
+              <p className="truncate text-sm font-bold text-white">
+                {cooldownLeftSec > 0
+                  ? `冷却中 ${cooldownLeftSec}s`
+                  : silenced
+                    ? "禁言中 · 无法施放"
+                    : canUseItem
+                      ? "点按打开技能库"
+                      : "本局次数已用尽"}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-0.5">
+              <span className="rounded-full border border-sf-gold/35 bg-sf-gold/10 px-2 py-0.5 text-[0.65rem] font-black text-sf-gold">
+                {skillsRemaining}/{game.itemMax}
+              </span>
+              <span className="text-lg font-black text-sf-muted" aria-hidden>
+                ⌄
+              </span>
+            </div>
+          </button>
         </footer>
       )}
     </div>

@@ -9,8 +9,12 @@ export type SudokuBoardVisualState = {
   grid: Grid9;
   givens: Grid9;
   blindRows: boolean[];
+  blindCols: boolean[];
+  blindBoxes: boolean[];
   conflicts: Set<string>;
   selected: { row: number; col: number } | null;
+  /** 被技能锁定的格子（仅展示） */
+  lockedCell: { row: number; col: number } | null;
   readOnly: boolean;
 };
 
@@ -22,7 +26,17 @@ const COL_USER = 0xf4f4ff;
 const COL_LINE = 0x3d3a55;
 const COL_LINE_THICK = 0x5b5678;
 const COL_ACCENT = 0x2ee6d6;
-const COL_BLIND = 0x05040a;
+/** 与棋盘 Application background 一致，遮盖层不透明以彻底盖住数字 */
+const COL_BLIND = 0x06050a;
+
+function cellIsBlinded(
+  row: number,
+  col: number,
+  state: Pick<SudokuBoardVisualState, "blindRows" | "blindCols" | "blindBoxes">,
+): boolean {
+  const box = Math.floor(row / 3) * 3 + Math.floor(col / 3);
+  return Boolean(state.blindRows[row] || state.blindCols[col] || state.blindBoxes[box]);
+}
 
 export function renderSudokuBoardPixi(
   root: Container,
@@ -61,6 +75,7 @@ export function renderSudokuBoardPixi(
       const key = `${row}-${col}`;
       const conflict = state.conflicts.has(key);
       const sel = state.selected?.row === row && state.selected?.col === col;
+      const blinded = cellIsBlinded(row, col, state);
 
       const g = new Graphics();
       let fill = COL_CELL;
@@ -77,7 +92,7 @@ export function renderSudokuBoardPixi(
 
       root.addChild(g);
 
-      if (display !== 0) {
+      if (display !== 0 && !blinded) {
         const style = conflict ? styleConflict : given ? styleGiven : styleUser;
         const t = new Text({ text: String(display), style });
         t.anchor.set(0.5);
@@ -94,14 +109,15 @@ export function renderSudokuBoardPixi(
     .stroke({ width: 2.5, color: COL_LINE_THICK });
   root.addChildAt(border, 0);
 
+  const blindLayer = new Graphics();
   for (let row = 0; row < 9; row++) {
-    if (!state.blindRows[row]) continue;
-    const blind = new Graphics();
-    blind
-      .rect(0, row * cell, sizePx, cell)
-      .fill({ color: COL_BLIND, alpha: 0.82 });
-    root.addChild(blind);
+    for (let col = 0; col < 9; col++) {
+      const box = Math.floor(row / 3) * 3 + Math.floor(col / 3);
+      if (!state.blindRows[row] && !state.blindCols[col] && !state.blindBoxes[box]) continue;
+      blindLayer.rect(col * cell, row * cell, cell, cell).fill({ color: COL_BLIND, alpha: 1 });
+    }
   }
+  root.addChild(blindLayer);
 
   if (state.selected && !state.readOnly) {
     const { row, col } = state.selected;
@@ -110,6 +126,17 @@ export function renderSudokuBoardPixi(
     const ring = new Graphics();
     ring.rect(x + 1, y + 1, cell - 2, cell - 2).stroke({ width: 2.5, color: COL_ACCENT });
     root.addChild(ring);
+  }
+
+  if (state.lockedCell) {
+    const { row, col } = state.lockedCell;
+    const x = col * cell;
+    const y = row * cell;
+    const lockRing = new Graphics();
+    lockRing
+      .rect(x + 2, y + 2, cell - 4, cell - 4)
+      .stroke({ width: 2.2, color: 0xfbbf24, alpha: 0.95 });
+    root.addChild(lockRing);
   }
 }
 
