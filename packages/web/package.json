@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "clean": "turbo run clean && rimraf node_modules .turbo dist"
+    "clean": "rimraf node_modules .turbo dist"
   },
   "dependencies": {
     "@sudoku-fight/shared": "workspace:*",

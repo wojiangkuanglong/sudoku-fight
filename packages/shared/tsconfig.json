@@ -3,7 +3,9 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     "declaration": true,
+    "declarationMap": true,
     "noEmit": false,
     "composite": true,
     "strictNullChecks": true

@@ -15,10 +15,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true,
-    "paths": {
-      "@sudoku-fight/shared": ["../shared/src/index.ts"]
-    }
+    "noUncheckedSideEffectImports": true
   },
   "include": ["src"]
 }
